@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ROLES } from '../../../src/db/employee.schema.ts';
+import { ROLES } from '../../db/employee.schema.ts';
 
 export const roleEnum = z.enum(ROLES);
 export const statusEnum = z.enum(['pending', 'active', 'deactivated', 'all']);
