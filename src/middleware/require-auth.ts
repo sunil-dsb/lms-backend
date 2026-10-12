@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import { employees, user, SUPER_ADMIN_USER_ROLE } from '../db/schema/index.ts';
 
-import { auth } from '../lib/auth.ts';
+import { auth } from '../config/auth.ts';
 
 export interface AuthedRequest extends Request {
   session?: {
@@ -94,9 +94,22 @@ export async function requireAuth(
     return next();
   }
 
+  if (employee.status === 'deactivated') {
+    res.status(403).json({
+      error: {
+        code: 'EMPLOYEE_DEACTIVATED',
+        message: 'This account has been deactivated.',
+      },
+    });
+    return;
+  }
+
   if (employee.status !== 'active') {
-    res.status(401).json({
-      error: { code: 'SESSION_INVALID', message: 'Session expired or invalid' },
+    res.status(403).json({
+      error: {
+        code: 'ACCOUNT_NOT_ACTIVE',
+        message: 'This account is not active.',
+      },
     });
     return;
   }

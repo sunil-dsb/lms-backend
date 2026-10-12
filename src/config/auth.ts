@@ -1,4 +1,6 @@
 import { betterAuth } from 'better-auth';
+import { hashPassword, verifyPassword } from 'better-auth/crypto';
+import bcrypt from 'bcryptjs';
 import { magicLink, bearer } from 'better-auth/plugins';
 import { emailOTP } from 'better-auth/plugins/email-otp';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -120,6 +122,21 @@ export const auth = betterAuth({
     requireEmailVerification: false,
     minPasswordLength: 8,
     autoSignIn: false, // we sign in explicitly from the activate controller
+    password: {
+      hash: async (password: string) => hashPassword(password),
+      verify: async ({
+        password,
+        hash,
+      }: {
+        password: string;
+        hash: string;
+      }) => {
+        if (hash.startsWith('$2a$') || hash.startsWith('$2b$')) {
+          return bcrypt.compare(password, hash);
+        }
+        return verifyPassword({ password, hash });
+      },
+    },
   },
 
   // 3. Session shape — kept conservative. Sliding refresh, no cookie cache:
@@ -148,7 +165,6 @@ export const auth = betterAuth({
   trustedOrigins: Array.from(
     new Set([
       config.frontendBaseUrl,
-      'https://7x7g7h6m-3000.inc1.devtunnels.ms',
       'http://localhost:3000',
       'http://127.0.0.1:3000',
       'https://alimentaria-lms.vercel.app',

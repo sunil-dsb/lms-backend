@@ -22,12 +22,11 @@
 
 import * as dotenv from 'dotenv';
 dotenv.config({ path: 'development.env' });
-import { sql, closeDb } from '../src/db/client.ts';
-import { employees } from '../src/db/schema/index.ts';
+import { closeDb } from '../src/db/client.ts';
 import { eq } from 'drizzle-orm';
 import { db } from '../src/db/client.ts';
 import { user, SUPER_ADMIN_USER_ROLE } from '../src/db/schema/index.ts';
-import { auth } from '../src/lib/auth.ts';
+import { auth } from '../src/config/auth.ts';
 
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
@@ -36,70 +35,6 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// We still keep a reference to the main location ID for seeding stations and the master user
-const MAIN_LOCATION_NAME = 'Mexicana Main';
-let mainLocationId = '';
-
-async function fetchMainLocationId(): Promise<void> {
-  const existing =
-    await sql`SELECT id FROM locations WHERE name = ${MAIN_LOCATION_NAME}`;
-  if (existing.length === 0) {
-    throw new Error(
-      `Location '${MAIN_LOCATION_NAME}' not found. Please run seed-locations.ts first.`,
-    );
-  }
-  mainLocationId = existing[0].id;
-}
-
-const MASTER_NAME = 'admin';
-const MASTER_EMPLOYEE_ID = '00000000-0000-0000-0000-000000000000';
-
-async function ensureMasterEmployee(): Promise<string> {
-  // Idempotent master — stable id so reseeding doesn't churn.
-  // If the master is already active, leave them and just print a fresh invite.
-  const [existing] = await db
-    .select({ id: employees.id, status: employees.status })
-    .from(employees)
-    .where(eq(employees.id, MASTER_EMPLOYEE_ID))
-    .limit(1);
-
-  if (existing) {
-    console.log(
-      `master employee: ${MASTER_EMPLOYEE_ID} (already seeded, status=${existing.status})`,
-    );
-    return existing.id;
-  }
-
-  // Pre-check: refuse if any other master exists in this location.
-  const [otherMaster] = await db
-    .select({ id: employees.id })
-    .from(employees)
-    .where(eq(employees.role, 'super_admin'))
-    .limit(1);
-
-  if (otherMaster) {
-    console.warn(
-      `master employee: skipped — another master (${otherMaster.id}) already exists. ` +
-        `Remove it or use pnpm admin bootstrap to add another.`,
-    );
-    return otherMaster.id;
-  }
-
-  const name = MASTER_NAME;
-
-  await db.insert(employees).values({
-    id: MASTER_EMPLOYEE_ID,
-    name,
-    email: 'admin@example.com',
-    locationId: mainLocationId,
-    role: 'super_admin',
-    languagePref: 'en',
-    status: 'pending',
-  });
-  console.log(`master employee: ${MASTER_EMPLOYEE_ID} (created, name=${name})`);
-  return MASTER_EMPLOYEE_ID;
-}
 
 // Returns the super admin's user id so seed-categories can use it as the
 // creator (categories.created_by references user.id).
@@ -165,10 +100,8 @@ async function run(): Promise<void> {
   }
 
   console.log('\n===========================================');
-  console.log('Running master employee setup (seed.ts)...');
+  console.log('Ensuring super admin user (seed.ts)...');
   console.log('===========================================\n');
-  await fetchMainLocationId();
-  await ensureMasterEmployee();
   const superAdminUserId = await ensureSuperAdminUser();
 
   console.log('\n===========================================');

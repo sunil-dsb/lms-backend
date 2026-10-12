@@ -65,11 +65,29 @@ const config = {
   databaseUrl: envVars.DATABASE_URL,
   betterAuthSecret: envVars.BETTER_AUTH_SECRET,
   betterAuthUrl: envVars.BETTER_AUTH_URL,
-  cors: [envVars.FRONTEND_BASE_URL],
-  frontendBaseUrl: envVars.FRONTEND_BASE_URL,
+  cors: Array.from(
+    new Set(
+      [
+        envVars.FRONTEND_BASE_URL,
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'https://alimentaria-lms.vercel.app',
+      ].filter((o): o is string => Boolean(o)),
+    ),
+  ),
+  frontendBaseUrl: (
+    envVars.FRONTEND_BASE_URL ||
+    (envVars.NODE_ENV === 'production'
+      ? 'https://alimentaria-lms.vercel.app'
+      : 'http://localhost:3000')
+  ).replace(/\/+$/, ''),
   resendApiKey: envVars.RESEND_API_KEY,
   r2AccountId: envVars.R2_ACCOUNT_ID,
-  r2Endpoint: envVars.R2_ENDPOINT,
+  r2Endpoint:
+    envVars.R2_ENDPOINT ||
+    (envVars.R2_ACCOUNT_ID
+      ? `https://${envVars.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`
+      : undefined),
   r2AccessKeyId: envVars.R2_ACCESS_KEY_ID,
   r2SecretAccessKey: envVars.R2_SECRET_ACCESS_KEY,
   r2Bucket: envVars.R2_BUCKET,

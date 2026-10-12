@@ -28,18 +28,13 @@ export function normalizeName(name: string): string {
 export async function sendInviteMagicLink(input: {
   email: string;
   languagePref: LanguagePref;
+  name?: string;
 }): Promise<string> {
-  const isProd =
-    config.env === 'production' || process.env.NODE_ENV === 'production';
-  let frontendUrl = isProd
-    ? 'https://alimentaria-lms.vercel.app'
-    : config.frontendBaseUrl && !config.frontendBaseUrl.includes('vercel.app')
-      ? config.frontendBaseUrl
-      : 'http://localhost:3000';
-  frontendUrl = frontendUrl.replace(/\/+$/, '');
+  const frontendUrl = config.frontendBaseUrl.replace(/\/+$/, '');
   await auth.api.signInMagicLink({
     body: {
       email: input.email,
+      name: input.name,
       newUserCallbackURL: `${frontendUrl}/${input.languagePref}/set-password`,
       callbackURL: `${frontendUrl}/${input.languagePref}/dashboard`,
     },

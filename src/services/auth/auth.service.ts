@@ -5,7 +5,7 @@ import { auth } from '../../config/auth.ts';
 import type { Request } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
 import { db } from '../../db/client.ts';
-import { user, stations, jobs } from '../../db/index.ts';
+import { user, session, stations, jobs } from '../../db/index.ts';
 import { eq, inArray } from 'drizzle-orm';
 
 type Employee = typeof employees.$inferSelect;
@@ -81,6 +81,30 @@ export async function loginUser(
     });
   }
 
+  // Check linked employee to enrich user.name and block deactivated accounts
+  const [emp] = await db
+    .select({ name: employees.name, status: employees.status })
+    .from(employees)
+    .where(eq(employees.userId, data.user.id))
+    .limit(1);
+
+  if (emp) {
+    if (emp.status === 'deactivated') {
+      await db.delete(session).where(eq(session.userId, data.user.id));
+      throw new ApiError('This account has been deactivated.', 403, true, '', {
+        code: 'EMPLOYEE_DEACTIVATED',
+      });
+    }
+
+    if (!data.user.name && emp.name) {
+      data.user.name = emp.name;
+      await db
+        .update(user)
+        .set({ name: emp.name })
+        .where(eq(user.id, data.user.id));
+    }
+  }
+
   return {
     user: data.user,
     token,
@@ -135,9 +159,15 @@ export async function getSessionService(req: Request) {
     };
   }
 
+  if (employee.status === 'deactivated') {
+    throw new ApiError('This account has been deactivated.', 403, true, '', {
+      code: 'EMPLOYEE_DEACTIVATED',
+    });
+  }
+
   if (employee.status !== 'active') {
-    throw new ApiError('Session expired or invalid', 401, true, '', {
-      code: 'SESSION_INVALID',
+    throw new ApiError('This account is not active.', 403, true, '', {
+      code: 'ACCOUNT_NOT_ACTIVE',
     });
   }
 

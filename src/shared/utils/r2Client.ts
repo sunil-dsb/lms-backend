@@ -1,9 +1,7 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { logger } from '../../config/logger.ts';
 
-const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
-const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
-const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
+import config from '../../config/index.ts';
 
 let warnedMissingEnv = false;
 
@@ -16,26 +14,43 @@ function warnMissingEnvOnce(): void {
 }
 
 // Lazy so dev boots without R2 configured; the warn fires on first use.
-let s3: S3Client | null = null;
+let s3Instance: S3Client | null = null;
 
 export function getS3Client(): S3Client {
-  if (s3) return s3;
-  if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) {
+  if (s3Instance) return s3Instance;
+  const accountId = config.r2AccountId || process.env.R2_ACCOUNT_ID;
+  const accessKeyId = config.r2AccessKeyId || process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey =
+    config.r2SecretAccessKey || process.env.R2_SECRET_ACCESS_KEY;
+  const endpoint =
+    config.r2Endpoint ||
+    process.env.R2_ENDPOINT ||
+    (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined);
+
+  if (!endpoint || !accessKeyId || !secretAccessKey) {
     warnMissingEnvOnce();
     // Throw so callers can map to a 500; the warn above tells the operator.
     throw new Error('R2 client not configured (R2_* env vars missing)');
   }
-  s3 = new S3Client({
+  s3Instance = new S3Client({
     region: 'auto',
-    endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    endpoint,
     forcePathStyle: true,
     credentials: {
-      accessKeyId: R2_ACCESS_KEY_ID,
-      secretAccessKey: R2_SECRET_ACCESS_KEY,
+      accessKeyId,
+      secretAccessKey,
     },
   });
-  return s3;
+  return s3Instance;
 }
+
+export const s3 = new Proxy({} as S3Client, {
+  get(_target, prop) {
+    const client = getS3Client();
+    const val = (client as unknown as Record<string | symbol, unknown>)[prop];
+    return typeof val === 'function' ? val.bind(client) : val;
+  },
+});
 
 // <folder>/<yyyy>/<mm>/<uuid>.<ext> — month-sharded for cheap future
 // per-month lifecycle policies; uuid leaf to avoid collisions.

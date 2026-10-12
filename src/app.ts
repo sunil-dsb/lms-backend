@@ -5,7 +5,7 @@ import { toNodeHandler } from 'better-auth/node';
 import { sql } from './db/client.ts';
 import { logger } from './config/logger.ts';
 import router from './routes.ts';
-import { auth } from './lib/auth.ts';
+import { auth } from './config/auth.ts';
 import { requestId } from './middleware/request-id.ts';
 import { notFoundHandler } from './middleware/not-found.ts';
 import { errorConverter, errorHandler } from './middleware/error-handler.ts';

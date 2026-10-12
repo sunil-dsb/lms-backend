@@ -54,6 +54,7 @@ export const createEmployee = catchAsync(
     // Send magic link invite email — Better Auth handles token generation.
     const inviteUrl = await sendInviteMagicLink({
       email: row.email,
+      name: row.name,
       languagePref: row.languagePref,
     });
 
@@ -110,6 +111,7 @@ export const resendInvite = catchAsync(
     // entries expire; new one replaces semantics via TTL).
     const inviteUrl = await sendInviteMagicLink({
       email: employee.email,
+      name: employee.name,
       languagePref: employee.languagePref,
     });
 

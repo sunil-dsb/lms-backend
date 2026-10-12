@@ -11,7 +11,7 @@ import {
   getSessionService,
 } from '../../services/auth/auth.service.ts';
 import config from '../../config/index.ts';
-import bcrypt from 'bcryptjs';
+import { hashPassword } from 'better-auth/crypto';
 import ApiError from '../../shared/utils/ApiError.ts';
 import ApiResponse from '../../shared/utils/ApiResponse.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
@@ -177,8 +177,7 @@ export const setPassword = catchAsync(
         );
 
       // Hash password and upsert into Better Auth's account table.
-      // This is the same bcrypt format Better Auth uses for credential accounts.
-      const passwordHash = await bcrypt.hash(password, 10);
+      const passwordHash = await hashPassword(password);
       const [existingAccount] = await db
         .select({ id: account.id })
         .from(account)
@@ -211,7 +210,7 @@ export const setPassword = catchAsync(
           .where(eq(employees.id, emp.id));
         await tx
           .update(user)
-          .set({ emailVerified: true })
+          .set({ emailVerified: true, name: emp.name })
           .where(eq(user.id, userId!));
       });
 
@@ -258,7 +257,7 @@ export const setPassword = catchAsync(
       });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await hashPassword(password);
     await db
       .update(account)
       .set({ password: passwordHash, updatedAt: new Date() })
@@ -270,6 +269,11 @@ export const setPassword = catchAsync(
       .update(employees)
       .set({ status: 'active', requirePasswordChange: false })
       .where(eq(employees.id, employee.id));
+
+    await db
+      .update(user)
+      .set({ name: employee.name })
+      .where(eq(user.id, userId));
 
     const [updated] = await db
       .select()

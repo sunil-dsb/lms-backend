@@ -20,3 +20,31 @@ export const quiz = pgTable('quiz', {
 
 export type Quiz = typeof quiz.$inferSelect;
 export type NewQuiz = typeof quiz.$inferInsert;
+
+import { z } from 'zod';
+
+const localisedString = z.object({
+  en: z.string(),
+  es: z.string().optional(),
+});
+
+export const quizChoiceSchema = z.object({
+  id: z.string(),
+  label: localisedString,
+});
+
+export const quizQuestionSchema = z.object({
+  id: z.string(),
+  question: localisedString,
+  choices: z.array(quizChoiceSchema),
+  correctChoiceId: z.string().optional(),
+});
+
+export const createQuizInputSchema = z.object({
+  nameEn: z.string().min(1, 'English name is required'),
+  nameEs: z.string().min(1, 'Spanish name is required'),
+  quizType: z.enum(['procedure', 'course']).optional(),
+  questions: z.array(quizQuestionSchema).default([]),
+});
+
+export type CreateQuizInput = z.infer<typeof createQuizInputSchema>;
