@@ -31,7 +31,7 @@ proceduresRoute.get('/assigned', requireAuth, getAssignedProcedures);
 // Public read route (any logged-in employee)
 proceduresRoute.get('/:slug', requireAuth, getProcedure);
 
-// Admin routes
+// Admin rout
 proceduresRoute.post(
   '/',
   requireAuth,

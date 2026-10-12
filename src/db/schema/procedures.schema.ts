@@ -9,7 +9,6 @@ import {
 } from 'drizzle-orm/pg-core';
 import { subcategories } from './subcategories.schema.ts';
 import { quiz } from './quizzes.schema.ts';
-import { stations } from './stations.schema.ts';
 
 import { user } from './auth.schema.ts';
 
@@ -30,9 +29,7 @@ export const procedures = pgTable(
     subcategoryId: uuid('subcategory_id').references(() => subcategories.id, {
       onDelete: 'set null',
     }),
-    stationId: uuid('station_id').references(() => stations.id, {
-      onDelete: 'set null',
-    }),
+    stationIds: uuid('station_ids').array(),
     quizId: uuid('quiz_id').references(() => quiz.id, {
       onDelete: 'set null',
     }),
@@ -56,7 +53,6 @@ export const procedures = pgTable(
   (t) => ({
     slugUnique: uniqueIndex('procedures_slug_uniq').on(t.slug),
     bySubcategory: index('procedures_subcategory_idx').on(t.subcategoryId),
-    byStation: index('procedures_station_idx').on(t.stationId),
     byQuiz: index('procedures_quiz_idx').on(t.quizId),
     byStatus: index('procedures_status_idx').on(t.status),
     // Admin lists are ordered newest-updated first.
