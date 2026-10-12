@@ -116,18 +116,20 @@ export const getAssignedProcedures = catchAsync(
 
     const { page, limit, search } = getPaginationParams(req.query);
     const stationIds = req.employee.stationIds || [];
-
-    // If employee has no stations, they shouldn't see any station-specific procedures.
-    // We pass a fake UUID so the IN clause finds nothing.
-    const effectiveStationIds =
-      stationIds.length > 0
-        ? stationIds
-        : ['00000000-0000-0000-0000-000000000000'];
+    const scope = typeof req.query.scope === 'string' ? req.query.scope : 'all';
+    const categoryId =
+      typeof req.query.categoryId === 'string' &&
+      req.query.categoryId.trim().length > 0
+        ? req.query.categoryId.trim()
+        : undefined;
 
     const paginatedResult = await proceduresService.listProcedures(
       {
         status: 'published',
-        stationIds: effectiveStationIds,
+        stationIds,
+        assignedEmployeeId: req.employee.id || undefined,
+        scope,
+        categoryIds: categoryId ? [categoryId] : undefined,
         search,
       },
       page,

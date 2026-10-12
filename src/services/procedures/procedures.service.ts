@@ -52,11 +52,12 @@ export interface PublicProcedure {
   stationIds: string[] | null;
   quizId: string | null;
   procedureImage: string | null;
-  assignUsers: string[] | null;
+  assignUsers?: string[] | null;
+  isDirectlyAssigned?: boolean;
   status: ProcedureStatus;
   previousStatus: ProcedureStatus | null;
-  bodyEn: ProcedureBody;
-  bodyEs: ProcedureBody;
+  bodyEn?: ProcedureBody;
+  bodyEs?: ProcedureBody;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
@@ -91,9 +92,10 @@ export function publicProcedure(
     subcategory: typeof subcategories.$inferSelect | null;
     stations?: { id: string; name: string }[] | undefined;
   },
+  options: { includeBody?: boolean } = { includeBody: true },
 ): PublicProcedure {
   const p = row;
-  return {
+  const result: PublicProcedure = {
     id: p.id,
     slug: p.slug,
     titleEn: p.titleEn,
@@ -107,12 +109,17 @@ export function publicProcedure(
     assignUsers: p.assignUsers,
     status: p.status,
     previousStatus: (p.previousStatus as ProcedureStatus) ?? null,
-    bodyEn: parseStoredBody(p.blocksEn, `${p.id}/blocksEn`),
-    bodyEs: parseStoredBody(p.blocksEs, `${p.id}/blocksEs`),
     createdBy: p.createdBy,
     createdAt: p.createdAt.toISOString(),
     updatedAt: p.updatedAt.toISOString(),
   };
+
+  if (options.includeBody) {
+    result.bodyEn = parseStoredBody(p.blocksEn, `${p.id}/blocksEn`);
+    result.bodyEs = parseStoredBody(p.blocksEs, `${p.id}/blocksEs`);
+  }
+
+  return result;
 }
 
 // URL-safe slug from a human title. Lowercase, ASCII, hyphens.
@@ -422,10 +429,13 @@ export async function listProcedures(
   filter: {
     status?: ProcedureStatus | undefined;
     stationIds?: string[] | undefined;
+    assignedEmployeeId?: string | undefined;
+    scope?: string | undefined;
     subcategoryIds?: string[] | undefined;
     categoryIds?: string[] | undefined;
     categoryType?: string | undefined;
     search?: string | undefined;
+    includeBody?: boolean | undefined;
   } = {},
   page: number = 1,
   limit: number = 10,
@@ -436,7 +446,40 @@ export async function listProcedures(
     conditions.push(eq(procedures.status, filter.status));
   }
 
-  if (filter.stationIds && filter.stationIds.length > 0) {
+  if (filter.assignedEmployeeId) {
+    const empId = filter.assignedEmployeeId;
+    const hasStations = filter.stationIds && filter.stationIds.length > 0;
+    const userMatch = sql`${procedures.assignUsers} && ARRAY[${empId}::uuid]`;
+    const stationMatch = hasStations
+      ? sql`${procedures.stationIds} && ARRAY[${sql.join(
+          filter.stationIds!.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )}]`
+      : undefined;
+
+    if (filter.scope === 'mine') {
+      if (stationMatch) {
+        conditions.push(
+          or(
+            userMatch,
+            and(
+              stationMatch,
+              sql`(${procedures.assignUsers} IS NULL OR array_length(${procedures.assignUsers}, 1) IS NULL OR array_length(${procedures.assignUsers}, 1) = 0)`,
+            ),
+          )!,
+        );
+      } else {
+        conditions.push(userMatch);
+      }
+    } else {
+      // Default: 'all'
+      if (stationMatch) {
+        conditions.push(or(stationMatch, userMatch)!);
+      } else {
+        conditions.push(userMatch);
+      }
+    }
+  } else if (filter.stationIds && filter.stationIds.length > 0) {
     conditions.push(
       sql`${procedures.stationIds} && ${sql`ARRAY[${sql.join(
         filter.stationIds.map((id) => sql`${id}::uuid`),
@@ -488,9 +531,21 @@ export async function listProcedures(
     .leftJoin(categories, eq(categories.id, subcategories.categoryId))
     .where(whereClause);
 
-  const mapped = rows.map((row) =>
-    publicProcedure({ ...row.proc, subcategory: row.subcategory }),
-  );
+  const mapped = rows.map((row) => {
+    const pub = publicProcedure(
+      { ...row.proc, subcategory: row.subcategory },
+      { includeBody: filter.includeBody ?? false },
+    );
+    if (filter.assignedEmployeeId) {
+      pub.isDirectlyAssigned = Boolean(
+        pub.assignUsers &&
+        filter.assignedEmployeeId &&
+        pub.assignUsers.includes(filter.assignedEmployeeId),
+      );
+      delete pub.assignUsers;
+    }
+    return pub;
+  });
   return formatPaginatedResult(mapped, countRes?.total ?? 0, page, limit);
 }
 
