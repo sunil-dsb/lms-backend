@@ -13,6 +13,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # The role's trust policy must match the "sub" claim exactly. These
+      # claims identify the workflow and are not secret.
+      - name: Show the OIDC claims GitHub sends to AWS
+        run: |
+          set -euo pipefail
+          curl -sS -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" |
+            jq -r '.value | split(".")[1] | gsub("-"; "+") | gsub("_"; "/")' |
+            jq -R '. + ("=" * ((4 - (length % 4)) % 4)) | @base64d | fromjson
+              | {sub, aud, iss, repository, repository_owner, ref}'
+
       - name: Configure AWS credentials through OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
