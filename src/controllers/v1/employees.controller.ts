@@ -7,7 +7,7 @@ import {
   updateSchema,
   idParam,
 } from '../../shared/validations/employees.schema.ts';
-import { SQL, and, eq, count, ilike, or, inArray } from 'drizzle-orm';
+import { SQL, and, eq, count, ilike, or, inArray, desc } from 'drizzle-orm';
 import {
   getPaginationParams,
   formatPaginatedResult,
@@ -255,6 +255,7 @@ export const listEmployees = catchAsync(
       .from(employees)
       .leftJoin(locations, eq(locations.id, employees.locationId))
       .where(whereClause)
+      .orderBy(desc(employees.createdAt))
       .limit(limit)
       .offset(offset);
 
