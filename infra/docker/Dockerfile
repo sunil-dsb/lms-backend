@@ -24,8 +24,17 @@ FROM base AS prod-deps
 
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
+# better-auth lists drizzle-kit as a peer, which drags the esbuild compiler
+# binaries into the production tree. Nothing imports them at runtime.
+RUN rm -rf node_modules/.pnpm/@esbuild+* node_modules/.pnpm/esbuild@*
+
 # Runtime stage
 FROM node:22-alpine AS runtime
+
+# The app only needs the node binary. Dropping the bundled package managers
+# removes their dependencies from the image and from vulnerability scans.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx \
+    /usr/local/bin/corepack /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
 
 ENV NODE_ENV=production
 ENV PORT=4000

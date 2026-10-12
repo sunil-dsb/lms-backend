@@ -81,7 +81,9 @@
     "overrides": {
       "typescript-eslint>typescript": "$@typescript/typescript6",
       "@typescript-eslint/parser>typescript": "$@typescript/typescript6",
-      "@typescript-eslint/typescript-estree>typescript": "$@typescript/typescript6"
+      "@typescript-eslint/typescript-estree>typescript": "$@typescript/typescript6",
+      "proxy-addr": "^2.0.8",
+      "shell-quote": "^1.11.0"
     }
   }
 }
