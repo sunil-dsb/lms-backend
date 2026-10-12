@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { eq, inArray, sql, count, ilike } from 'drizzle-orm';
+import { eq, inArray, sql, count, ilike, desc } from 'drizzle-orm';
 import {
   formatPaginatedResult,
   type PaginatedResult,
@@ -11,16 +11,12 @@ import ApiError from '../../shared/utils/ApiError.ts';
 export interface PublicJob {
   id: string;
   name: string;
-  createdAt: string;
-  stationIds?: string[];
 }
 
 export function publicJob(r: Readonly<typeof jobs.$inferSelect>): PublicJob {
   return {
     id: r.id,
     name: r.name,
-    createdAt: r.createdAt.toISOString(),
-    stationIds: r.stationIds || [],
   };
 }
 
@@ -42,9 +38,15 @@ export async function listJobs(
   const offset = (page - 1) * limit;
   const whereClause = search ? ilike(jobs.name, `%${search}%`) : undefined;
   const rows = await db
-    .select()
+    .select({
+      id: jobs.id,
+      name: jobs.name,
+      createdAt: jobs.createdAt,
+      stationIds: jobs.stationIds,
+    })
     .from(jobs)
     .where(whereClause)
+    .orderBy(desc(jobs.createdAt))
     .limit(limit)
     .offset(offset);
   const [countRes] = await db

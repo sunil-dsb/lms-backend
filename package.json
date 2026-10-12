@@ -5,7 +5,7 @@
   "description": "Alimentaria Mexicana LMS — backend API",
   "type": "module",
   "scripts": {
-    "dev": "nodemon --watch src --ext ts,json --exec tsx src/index.ts",
+    "dev": "nodemon --watch src --watch development.env --ext ts,json,env --exec tsx src/index.ts",
     "build": "tsc && node scripts/copy-assets.mjs",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",

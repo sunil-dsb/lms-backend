@@ -14,7 +14,7 @@ const envVarsSchema = z.object({
   DATABASE_URL: z.string(),
   BETTER_AUTH_SECRET: z.string(),
   BETTER_AUTH_URL: z.string().optional(),
-  FRONTEND_BASE_URL: z.string().default('http://localhost:3000'),
+  FRONTEND_BASE_URL: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
 
   // Cloudflare R2

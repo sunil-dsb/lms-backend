@@ -123,11 +123,16 @@ export const getAssignedProcedures = catchAsync(
         ? req.query.categoryId.trim()
         : undefined;
 
+    const isAdmin =
+      Boolean(req.isSuperAdmin) ||
+      req.employee.role === 'super_admin' ||
+      req.employee.role === 'manager';
+
     const paginatedResult = await proceduresService.listProcedures(
       {
         status: 'published',
         stationIds,
-        assignedEmployeeId: req.employee.id || undefined,
+        assignedEmployeeId: !isAdmin ? req.employee.id || undefined : undefined,
         scope,
         categoryIds: categoryId ? [categoryId] : undefined,
         search,

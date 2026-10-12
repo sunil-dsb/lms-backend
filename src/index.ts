@@ -3,6 +3,7 @@ import app from './app.ts';
 import { logger } from './config/logger.ts';
 import { closeDb, sql } from './db/client.ts';
 
+// Server entrypoint
 const server = app.listen(config.port, () => {
   console.log(`⚙️  Server is running at port : ${config.port}`);
 
