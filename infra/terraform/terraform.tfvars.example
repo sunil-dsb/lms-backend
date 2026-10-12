@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+
+github_owner = "sunil-dsb"
+github_repo  = "lms-backend"
+
+aws_region = "ca-central-1"
+# AWS CLI profile to run Terraform with, e.g. one that assumes a deploy role.
+# aws_profile = "lms-terraform"
+
+# Origin of the web frontend, no trailing slash.
+frontend_base_url = "https://app.example.com"
+
+# Leave both empty for the first apply if DNS is not ready. Once the A record
+# for api_domain points at the ec2_public_ip output, set them, apply again and
+# redeploy; the deploy script then issues the certificate and enables HTTPS.
+api_domain    = ""
+certbot_email = ""
+
+# Set to false if this AWS account already has the GitHub OIDC provider.
+# create_github_oidc_provider = false
