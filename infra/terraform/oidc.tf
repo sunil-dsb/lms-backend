@@ -8,6 +8,22 @@ variable "github_repo" {
   type        = string
 }
 
+# GitHub puts the numeric owner and repository IDs into the OIDC subject
+# (repo:<owner>@<owner id>/<repo>@<repo id>:ref:...). The "Verify AWS OIDC"
+# workflow prints the exact subject. Leave both empty for the older
+# repo:<owner>/<repo>:ref:... form.
+variable "github_owner_id" {
+  description = "Numeric ID of the GitHub owner, as it appears in the OIDC subject claim"
+  type        = string
+  default     = ""
+}
+
+variable "github_repo_id" {
+  description = "Numeric ID of the GitHub repository, as it appears in the OIDC subject claim"
+  type        = string
+  default     = ""
+}
+
 variable "github_branch" {
   description = "Branch allowed to deploy to AWS"
   type        = string
@@ -40,6 +56,12 @@ data "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
+  github_oidc_repo = (
+    var.github_owner_id != "" && var.github_repo_id != ""
+    ? "${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}"
+    : "${var.github_owner}/${var.github_repo}"
+  )
+
   github_oidc_provider_arn = var.create_github_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
 }
 
@@ -63,7 +85,7 @@ data "aws_iam_policy_document" "github_oidc_assume_role" {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${var.github_owner}/${var.github_repo}:ref:refs/heads/${var.github_branch}"
+        "repo:${local.github_oidc_repo}:ref:refs/heads/${var.github_branch}"
       ]
     }
   }

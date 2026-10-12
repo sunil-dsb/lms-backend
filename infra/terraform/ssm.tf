@@ -30,6 +30,12 @@ resource "aws_ssm_parameter" "better_auth_secret" {
   value = random_password.better_auth_secret.result
 
   tags = local.tags
+
+  # Generated once as a starting value. Replacing it in SSM is allowed and
+  # must not be undone by the next apply, since that would sign everyone out.
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
 resource "aws_ssm_parameter" "better_auth_url" {

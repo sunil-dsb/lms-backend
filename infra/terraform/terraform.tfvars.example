@@ -3,6 +3,10 @@
 github_owner = "sunil-dsb"
 github_repo  = "lms-backend"
 
+# Numeric IDs from the OIDC subject claim; the "Verify AWS OIDC" workflow prints it.
+# github_owner_id = ""
+# github_repo_id  = ""
+
 aws_region = "ca-central-1"
 # AWS CLI profile to run Terraform with, e.g. one that assumes a deploy role.
 # aws_profile = "lms-terraform"
