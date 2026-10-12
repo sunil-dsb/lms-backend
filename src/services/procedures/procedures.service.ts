@@ -41,6 +41,11 @@ import {
 // Category row — null when the procedure has no category (the row's
 // category_id is null) or when the category was archived after this
 // procedure was created (FK SET NULL).
+export interface AssignedUserSummary {
+  id: string;
+  name: string;
+}
+
 export interface PublicProcedure {
   id: string;
   slug: string;
@@ -52,7 +57,7 @@ export interface PublicProcedure {
   stationIds: string[] | null;
   quizId: string | null;
   procedureImage: string | null;
-  assignUsers?: string[] | null;
+  assignUsers?: AssignedUserSummary[] | string[] | null;
   isDirectlyAssigned?: boolean;
   status: ProcedureStatus;
   previousStatus: ProcedureStatus | null;
@@ -120,6 +125,17 @@ export function publicProcedure(
   }
 
   return result;
+}
+
+export async function resolveAssignedUsers(
+  userIds: string[] | null | undefined,
+): Promise<AssignedUserSummary[]> {
+  if (!userIds || userIds.length === 0) return [];
+  const rows = await db
+    .select({ id: employees.id, name: employees.name })
+    .from(employees)
+    .where(inArray(employees.id, userIds));
+  return rows;
 }
 
 // URL-safe slug from a human title. Lowercase, ASCII, hyphens.
@@ -280,10 +296,14 @@ export async function createProcedure(
       errorCode: 'INTERNAL_ERROR',
     });
   }
-  return publicProcedure({
+  const pub = publicProcedure({
     ...row.proc,
     subcategory: row.subcategory,
   });
+  if (row.proc.assignUsers && row.proc.assignUsers.length > 0) {
+    pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
+  }
+  return pub;
 }
 
 /** Update an existing procedure by ID. Follows the same validation as create. */
@@ -409,10 +429,14 @@ export async function updateProcedure(
       errorCode: 'INTERNAL_ERROR',
     });
   }
-  return publicProcedure({
+  const pub = publicProcedure({
     ...row.proc,
     subcategory: row.subcategory,
   });
+  if (row.proc.assignUsers && row.proc.assignUsers.length > 0) {
+    pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
+  }
+  return pub;
 }
 
 /** Admin-only list of procedures. Newest first. Optionally filtered by:
@@ -458,19 +482,7 @@ export async function listProcedures(
       : undefined;
 
     if (filter.scope === 'mine') {
-      if (stationMatch) {
-        conditions.push(
-          or(
-            userMatch,
-            and(
-              stationMatch,
-              sql`(${procedures.assignUsers} IS NULL OR array_length(${procedures.assignUsers}, 1) IS NULL OR array_length(${procedures.assignUsers}, 1) = 0)`,
-            ),
-          )!,
-        );
-      } else {
-        conditions.push(userMatch);
-      }
+      conditions.push(userMatch);
     } else {
       // Default: 'all'
       if (stationMatch) {
@@ -538,9 +550,9 @@ export async function listProcedures(
     );
     if (filter.assignedEmployeeId) {
       pub.isDirectlyAssigned = Boolean(
-        pub.assignUsers &&
+        row.proc.assignUsers &&
         filter.assignedEmployeeId &&
-        pub.assignUsers.includes(filter.assignedEmployeeId),
+        row.proc.assignUsers.includes(filter.assignedEmployeeId),
       );
       delete pub.assignUsers;
     }
@@ -555,6 +567,13 @@ export async function listProcedures(
  *  status-based gating happens at the route layer. */
 export async function getProcedureBySlug(
   slug: string,
+  actor?:
+    | {
+        role?: string | undefined;
+        employeeId?: string | undefined;
+        isSuperAdmin?: boolean | undefined;
+      }
+    | undefined,
 ): Promise<PublicProcedure | null> {
   const [row] = await db
     .select({ proc: procedures, subcategory: subcategories })
@@ -563,7 +582,27 @@ export async function getProcedureBySlug(
     .where(eq(procedures.slug, slug))
     .limit(1);
   if (!row) return null;
-  return publicProcedure({ ...row.proc, subcategory: row.subcategory });
+
+  const pub = publicProcedure({ ...row.proc, subcategory: row.subcategory });
+
+  const isAdmin =
+    Boolean(actor?.isSuperAdmin) ||
+    actor?.role === 'super_admin' ||
+    actor?.role === 'manager';
+
+  if (isAdmin) {
+    pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
+  } else {
+    const employeeId = actor?.employeeId;
+    pub.isDirectlyAssigned = Boolean(
+      employeeId &&
+      row.proc.assignUsers &&
+      row.proc.assignUsers.includes(employeeId),
+    );
+    delete pub.assignUsers;
+  }
+
+  return pub;
 }
 
 /** Archive a procedure (draft → archived or published → archived).
