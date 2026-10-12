@@ -263,7 +263,11 @@ export const getProcedure = catchAsync(
       });
     }
 
-    const procedure = await proceduresService.getProcedureBySlug(slug);
+    const procedure = await proceduresService.getProcedureBySlug(slug, {
+      role: req.employee.role,
+      employeeId: req.employee.id,
+      isSuperAdmin: req.isSuperAdmin,
+    });
     if (!procedure) {
       throw new ApiError('Procedure not found', 404, true, '', {
         code: 'NOT_FOUND',
