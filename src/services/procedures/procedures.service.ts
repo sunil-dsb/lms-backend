@@ -49,7 +49,7 @@ export interface PublicProcedure {
   purposeEn: string;
   purposeEs: string;
   subcategory: PublicSubcategory | null;
-  stationId: string | null;
+  stationIds: string[] | null;
   quizId: string | null;
   procedureImage: string | null;
   assignUsers: string[] | null;
@@ -101,7 +101,7 @@ export function publicProcedure(
     purposeEn: p.purposeEn,
     purposeEs: p.purposeEs,
     subcategory: p.subcategory ? publicSubcategory(p.subcategory) : null,
-    stationId: p.stationId,
+    stationIds: p.stationIds,
     quizId: p.quizId,
     procedureImage: p.procedureImage,
     assignUsers: p.assignUsers,
@@ -172,15 +172,12 @@ export async function createProcedure(
   // a criticalLimit. Applies to method blocks AND the steps inside recipe
   // blocks (recipes have methods too).
 
-  // Verify the picked station exists. FK is SET NULL — an invalid id would
-  // silently corrupt the row, so surface a clean 400/404 here.
-  if (input.stationId != null) {
-    const [station] = await db
+  if (input.stationIds && input.stationIds.length > 0) {
+    const st = await db
       .select({ id: stations.id })
       .from(stations)
-      .where(eq(stations.id, input.stationId))
-      .limit(1);
-    if (!station) {
+      .where(inArray(stations.id, input.stationIds));
+    if (st.length !== input.stationIds.length) {
       throw Object.assign(new ApiError('Station not found', 404), {
         errorCode: 'STATION_NOT_FOUND',
       });
@@ -252,7 +249,7 @@ export async function createProcedure(
     purposeEn: input.purposeEn,
     purposeEs: input.purposeEs,
     subcategoryId: input.subcategoryId,
-    stationId: input.stationId ?? null,
+    stationIds: input.stationIds ?? null,
     quizId: input.quizId ?? null,
     procedureImage: input.procedureImage ?? null,
     assignUsers: input.assignUsers ?? null,
@@ -324,13 +321,12 @@ export async function updateProcedure(
     }
   }
 
-  if (input.stationId !== undefined && input.stationId !== null) {
-    const [station] = await db
+  if (input.stationIds && input.stationIds.length > 0) {
+    const st = await db
       .select({ id: stations.id })
       .from(stations)
-      .where(eq(stations.id, input.stationId))
-      .limit(1);
-    if (!station) {
+      .where(inArray(stations.id, input.stationIds));
+    if (st.length !== input.stationIds.length) {
       throw Object.assign(new ApiError('Station not found', 404), {
         errorCode: 'STATION_NOT_FOUND',
       });
@@ -376,7 +372,7 @@ export async function updateProcedure(
       ...(input.subcategoryId !== undefined && {
         subcategoryId: input.subcategoryId,
       }),
-      ...(input.stationId !== undefined && { stationId: input.stationId }),
+      ...(input.stationIds !== undefined && { stationIds: input.stationIds }),
       ...(input.quizId !== undefined && { quizId: input.quizId }),
       ...(input.procedureImage !== undefined && {
         procedureImage: input.procedureImage,
@@ -441,7 +437,12 @@ export async function listProcedures(
   }
 
   if (filter.stationIds && filter.stationIds.length > 0) {
-    conditions.push(inArray(procedures.stationId, filter.stationIds));
+    conditions.push(
+      sql`${procedures.stationIds} && ${sql`ARRAY[${sql.join(
+        filter.stationIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )}]`}`,
+    );
   }
 
   if (filter.subcategoryIds && filter.subcategoryIds.length > 0) {
@@ -597,18 +598,18 @@ export async function unarchiveProcedure(id: string): Promise<PublicProcedure> {
   });
 }
 
-/** Update the single station link of a procedure (string, null clears). */
+/** Update the station links of a procedure (array, null clears). */
 export async function updateProcedureStations(
   id: string,
-  stationId: string | null,
+  stationIds: string[] | null,
 ): Promise<PublicProcedure> {
-  if (stationId !== null) {
-    const [station] = await db
+  const ids = stationIds ?? [];
+  if (ids.length > 0) {
+    const st = await db
       .select({ id: stations.id })
       .from(stations)
-      .where(eq(stations.id, stationId))
-      .limit(1);
-    if (!station) {
+      .where(inArray(stations.id, ids));
+    if (st.length !== ids.length) {
       throw Object.assign(new ApiError('Station not found', 404), {
         errorCode: 'STATION_NOT_FOUND',
       });
@@ -617,7 +618,7 @@ export async function updateProcedureStations(
   const now = new Date();
   await db
     .update(procedures)
-    .set({ stationId, updatedAt: now })
+    .set({ stationIds: ids.length > 0 ? ids : null, updatedAt: now })
     .where(eq(procedures.id, id));
   const [row] = await db
     .select({ proc: procedures, subcategory: subcategories })

@@ -292,7 +292,7 @@ async function seedRecipes() {
         purposeEn: r.purposeEn,
         purposeEs: r.purposeEs,
         subcategoryId: cookingSub.id,
-        stationId: grillStation.id,
+        stationIds: [grillStation.id],
         quizId: insertedQuiz.id,
         status: 'published',
         blocksEn: blocks,

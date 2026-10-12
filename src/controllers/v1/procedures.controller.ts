@@ -16,7 +16,8 @@ import catchAsync from '../../shared/utils/catchAsync.ts';
 import { z } from 'zod';
 
 const updateStationsSchema = z.object({
-  stationId: z.string().uuid().nullable(),
+  stationIds: z.array(z.string().uuid()).nullable().optional(),
+  stationId: z.string().uuid().nullable().optional(),
 });
 
 // ============================================================================
@@ -314,10 +315,10 @@ export const updateProcedureStations = catchAsync(
     }
     const parsed = updateStationsSchema.safeParse(req.body);
     if (!parsed.success) throw parsed.error;
-    const procedure = await proceduresService.updateProcedureStations(
-      id,
-      parsed.data.stationId,
-    );
+    const ids =
+      parsed.data.stationIds ??
+      (parsed.data.stationId ? [parsed.data.stationId] : null);
+    const procedure = await proceduresService.updateProcedureStations(id, ids);
     res.status(200).json(
       ApiResponse.success('Procedure station updated successfully', {
         procedure,
