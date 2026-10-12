@@ -34,7 +34,7 @@ export const listSubcategoriesAdmin = catchAsync(
 
 export const createSubcategoryAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) throw new ApiError('Not authenticated', 401);
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
     const { categoryId } = req.params;
     if (!categoryId) throw new ApiError('Missing categoryId', 400);
 
@@ -44,7 +44,7 @@ export const createSubcategoryAdmin = catchAsync(
     const item = await subcategoriesService.createSubcategory(
       categoryId as string,
       parsed.data,
-      { employeeId: req.employee.id },
+      { userId: req.userId },
     );
     res.status(201).json(
       ApiResponse.success('Subcategory created successfully', {

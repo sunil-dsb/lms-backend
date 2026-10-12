@@ -169,10 +169,10 @@ export const ingredientSchema = z.object({
   name: z.string().min(1),
   form: z.string().optional(),
   allergen: z.boolean().optional(),
-  unit: z.string().optional(),
-  amounts: z.array(z.string().min(1)).default([]),
+  unit: z.string().optional(), // The editor keeps one slot per configured batch factor. When a recipe only
+  // has a base amount, higher-scale slots are intentionally empty strings.
+  amounts: z.array(z.string()).default([]),
 });
-
 // ---------------------------------------------------------------------------
 // Block discriminated union
 // ---------------------------------------------------------------------------

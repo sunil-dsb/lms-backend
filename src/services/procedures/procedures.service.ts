@@ -543,6 +543,26 @@ export async function listProcedures(
     .leftJoin(categories, eq(categories.id, subcategories.categoryId))
     .where(whereClause);
 
+  const allAssignedIds = new Set<string>();
+  for (const row of rows) {
+    if (row.proc.assignUsers) {
+      for (const uid of row.proc.assignUsers) {
+        allAssignedIds.add(uid);
+      }
+    }
+  }
+
+  const userMap = new Map<string, { id: string; name: string }>();
+  if (allAssignedIds.size > 0) {
+    const userRows = await db
+      .select({ id: employees.id, name: employees.name })
+      .from(employees)
+      .where(inArray(employees.id, Array.from(allAssignedIds)));
+    for (const u of userRows) {
+      userMap.set(u.id, u);
+    }
+  }
+
   const mapped = rows.map((row) => {
     const pub = publicProcedure(
       { ...row.proc, subcategory: row.subcategory },
@@ -555,6 +575,10 @@ export async function listProcedures(
         row.proc.assignUsers.includes(filter.assignedEmployeeId),
       );
       delete pub.assignUsers;
+    } else if (row.proc.assignUsers && row.proc.assignUsers.length > 0) {
+      pub.assignUsers = row.proc.assignUsers.map(
+        (uid) => userMap.get(uid) ?? { id: uid, name: 'Unknown' },
+      );
     }
     return pub;
   });

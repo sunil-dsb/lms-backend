@@ -75,7 +75,7 @@ export interface SubcategoryCreateInput {
 export async function createSubcategory(
   categoryId: string,
   input: SubcategoryCreateInput,
-  actor: { employeeId: string },
+  actor: { userId: string },
 ): Promise<PublicSubcategory> {
   const [cat] = await db
     .select({ id: categories.id })
@@ -94,7 +94,7 @@ export async function createSubcategory(
     categoryId,
     nameEn: input.nameEn,
     nameEs: input.nameEs,
-    createdBy: actor.employeeId,
+    createdBy: actor.userId,
     subcategoryIcon: '',
   });
 

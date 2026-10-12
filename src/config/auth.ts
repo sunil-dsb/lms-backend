@@ -75,13 +75,19 @@ export const auth = betterAuth({
         // Send email via Resend
         try {
           const html = getInviteEmailTemplate(emp.name, invitationUrl);
-          await resend.emails.send({
+          const { data, error } = await resend.emails.send({
             from: 'Almentria Mexicana <mihpros@mail.logiccloud.in>',
             to: email,
             subject: 'Welcome to Almentria Mexicana LMS',
             html,
           });
-          console.log(`[MAGIC LINK] Email sent to ${email}`);
+          if (error) {
+            console.error('[MAGIC LINK] Resend API error:', error);
+          } else {
+            console.log(
+              `[MAGIC LINK] Email sent successfully to ${email}, id: ${data?.id}`,
+            );
+          }
         } catch (error) {
           console.error('[MAGIC LINK] Failed to send email via Resend:', error);
         }
@@ -104,13 +110,19 @@ export const auth = betterAuth({
             `We received a request to reset your password. Use the verification code below to proceed. It expires in <strong>10 minutes</strong>.`,
             otp,
           );
-          await resend.emails.send({
+          const { data, error } = await resend.emails.send({
             from: 'Almentria Mexicana <mihpros@mail.logiccloud.in>',
             to: email,
             subject: 'Your Password Reset Code',
             html,
           });
-          console.log(`[EMAIL OTP] Reset OTP sent to ${email}`);
+          if (error) {
+            console.error('[EMAIL OTP] Resend API error:', error);
+          } else {
+            console.log(
+              `[EMAIL OTP] Reset OTP sent successfully to ${email}, id: ${data?.id}`,
+            );
+          }
         } catch (error) {
           console.error('[EMAIL OTP] Failed to send OTP email:', error);
         }

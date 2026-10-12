@@ -30,7 +30,7 @@ export const listCategories = catchAsync(
 
 export const createCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee?.id) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -42,7 +42,7 @@ export const createCategory = catchAsync(
     }
 
     const cat = await categoriesService.createCategory(parsed.data, {
-      employeeId: req.employee.id,
+      userId: req.userId,
     });
     res
       .status(201)
@@ -54,7 +54,7 @@ export const createCategory = catchAsync(
 
 export const createSubcategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee?.id) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -76,7 +76,7 @@ export const createSubcategory = catchAsync(
       categoryId,
       parsed.data,
       {
-        userId: req.employee.id,
+        userId: req.userId,
       },
     );
     res.status(201).json(

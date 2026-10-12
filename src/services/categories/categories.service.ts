@@ -86,7 +86,7 @@ export async function listCategories(
 
 export async function createCategory(
   input: CategoryCreateInput,
-  actor: { employeeId: string },
+  actor: { userId: string },
 ): Promise<PublicCategory> {
   const nameEn = input.nameEn.trim();
   const nameEs = input.nameEs.trim();
@@ -123,7 +123,7 @@ export async function createCategory(
     nameEs,
     categoryType,
     categoryIcon,
-    createdBy: actor.employeeId,
+    createdBy: actor.userId,
   });
 
   const [row] = await db
