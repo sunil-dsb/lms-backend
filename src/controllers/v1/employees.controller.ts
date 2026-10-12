@@ -7,13 +7,20 @@ import {
   updateSchema,
   idParam,
 } from '../../shared/validations/employees.schema.ts';
-import { SQL, and, eq, count, ilike, or } from 'drizzle-orm';
+import { SQL, and, eq, count, ilike, or, inArray } from 'drizzle-orm';
 import {
   getPaginationParams,
   formatPaginatedResult,
 } from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
-import { employees, locations, session } from '../../db/index.ts';
+import {
+  employees,
+  locations,
+  session,
+  jobs,
+  stations,
+} from '../../db/index.ts';
+
 import {
   sendInviteMagicLink,
   createEmployeeTransaction,
@@ -50,9 +57,11 @@ export const createEmployee = catchAsync(
       languagePref: row.languagePref,
     });
 
+    const employeeResponse = await buildEmployeeResponse(row);
+
     res.status(201).json(
       ApiResponse.success('Employee created and invite sent', {
-        employee: publicEmployee(row),
+        employee: employeeResponse,
         inviteUrl,
       }),
     );
@@ -157,9 +166,10 @@ export const deactivate = catchAsync(
       .from(employees)
       .where(eq(employees.id, employee.id))
       .limit(1);
+    const employeeResponse = await buildEmployeeResponse(updated!);
     res.status(200).json(
       ApiResponse.success('Employee deactivated successfully', {
-        employee: publicEmployee(updated!),
+        employee: employeeResponse,
       }),
     );
   },
@@ -205,9 +215,10 @@ export const reactivate = catchAsync(
       .from(employees)
       .where(eq(employees.id, employee.id))
       .limit(1);
+    const employeeResponse = await buildEmployeeResponse(updated!);
     res.status(200).json(
       ApiResponse.success('Employee reactivated successfully', {
-        employee: publicEmployee(updated!),
+        employee: employeeResponse,
       }),
     );
   },
@@ -250,11 +261,31 @@ export const listEmployees = catchAsync(
       .from(employees)
       .where(whereClause);
 
-    const mappedEmployees = rows.map((r) => ({
-      ...publicEmployee(r.employee),
-      locationName: r.locationName,
-      roleName: r.employee.role,
-    }));
+    const allJobIds = rows.flatMap((r) => r.employee.jobIds || []);
+    const allStationIds = rows.flatMap((r) => r.employee.stationIds || []);
+
+    const { jobMap, stationMap } = await getJobsAndStationsMap(
+      allJobIds,
+      allStationIds,
+    );
+
+    const mappedEmployees = rows.map((r) => {
+      const resolvedJobs = (r.employee.jobIds || [])
+        .map((id) => jobMap.get(id))
+        .filter((j): j is { id: string; name: string } => Boolean(j));
+
+      const resolvedStations = (r.employee.stationIds || [])
+        .map((id) => stationMap.get(id))
+        .filter((s): s is { id: string; name: string } => Boolean(s));
+
+      return {
+        ...publicEmployee(r.employee),
+        locationName: r.locationName,
+        roleName: r.employee.role,
+        jobs: resolvedJobs,
+        stations: resolvedStations,
+      };
+    });
 
     res.status(200).json(
       ApiResponse.success('Employees retrieved successfully', {
@@ -280,21 +311,30 @@ export const getEmployee = catchAsync(
       });
     }
 
-    const [employee] = await db
-      .select()
+    const [row] = await db
+      .select({
+        employee: employees,
+        locationName: locations.name,
+      })
       .from(employees)
+      .leftJoin(locations, eq(locations.id, employees.locationId))
       .where(eq(employees.id, param.data.id))
       .limit(1);
 
-    if (!employee) {
+    if (!row) {
       throw new ApiError('Employee not found', 404, true, '', {
         code: 'EMPLOYEE_NOT_FOUND',
       });
     }
 
+    const employeeResponse = await buildEmployeeResponse(
+      row.employee,
+      row.locationName,
+    );
+
     res.status(200).json(
       ApiResponse.success('Employee retrieved successfully', {
-        employee: publicEmployee(employee),
+        employee: employeeResponse,
       }),
     );
   },
@@ -328,9 +368,11 @@ export const updateEmployee = catchAsync(
       admin.id,
     );
 
+    const employeeResponse = await buildEmployeeResponse(updated);
+
     res.status(200).json(
       ApiResponse.success('Employee updated successfully', {
-        employee: publicEmployee(updated),
+        employee: employeeResponse,
       }),
     );
   },
@@ -348,11 +390,84 @@ export function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
     employeeCode: e.employeeCode,
     locationId: e.locationId,
     role: e.role,
-    jobIds: e.jobIds,
-    stationIds: e.stationIds,
     languagePref: e.languagePref,
     status: e.status,
     createdAt: e.createdAt.toISOString(),
     deactivatedAt: e.deactivatedAt ? e.deactivatedAt.toISOString() : null,
+  };
+}
+
+export async function getJobsAndStationsMap(
+  jobIds: (string | null | undefined)[],
+  stationIds: (string | null | undefined)[],
+) {
+  const uniqueJobIds = [
+    ...new Set(jobIds.filter((id): id is string => Boolean(id))),
+  ];
+  const uniqueStationIds = [
+    ...new Set(stationIds.filter((id): id is string => Boolean(id))),
+  ];
+
+  const [jobRows, stationRows] = await Promise.all([
+    uniqueJobIds.length > 0
+      ? db
+          .select({ id: jobs.id, name: jobs.name })
+          .from(jobs)
+          .where(inArray(jobs.id, uniqueJobIds))
+      : Promise.resolve([]),
+    uniqueStationIds.length > 0
+      ? db
+          .select({ id: stations.id, name: stations.name })
+          .from(stations)
+          .where(inArray(stations.id, uniqueStationIds))
+      : Promise.resolve([]),
+  ]);
+
+  const jobMap = new Map<string, { id: string; name: string }>();
+  for (const j of jobRows) {
+    jobMap.set(j.id, { id: j.id, name: j.name });
+  }
+
+  const stationMap = new Map<string, { id: string; name: string }>();
+  for (const s of stationRows) {
+    stationMap.set(s.id, { id: s.id, name: s.name });
+  }
+
+  return { jobMap, stationMap };
+}
+
+export async function buildEmployeeResponse(
+  employee: typeof employees.$inferSelect,
+  locationName?: string | null,
+) {
+  let locName = locationName;
+  if (locName === undefined && employee.locationId) {
+    const [loc] = await db
+      .select({ name: locations.name })
+      .from(locations)
+      .where(eq(locations.id, employee.locationId))
+      .limit(1);
+    locName = loc?.name ?? null;
+  }
+
+  const { jobMap, stationMap } = await getJobsAndStationsMap(
+    employee.jobIds || [],
+    employee.stationIds || [],
+  );
+
+  const resolvedJobs = (employee.jobIds || [])
+    .map((id) => jobMap.get(id))
+    .filter((j): j is { id: string; name: string } => Boolean(j));
+
+  const resolvedStations = (employee.stationIds || [])
+    .map((id) => stationMap.get(id))
+    .filter((s): s is { id: string; name: string } => Boolean(s));
+
+  return {
+    ...publicEmployee(employee),
+    locationName: locName ?? null,
+    roleName: employee.role,
+    jobs: resolvedJobs,
+    stations: resolvedStations,
   };
 }

@@ -237,11 +237,7 @@ export const setPassword = catchAsync(
           .where(inArray(jobs.id, updated.jobIds));
       }
 
-      const { jobIds, stationIds, ...cleanEmployee } = publicEmployee(updated!);
-      // Stripped from the response in favour of the denormalised
-      // `stations` / `jobs` objects above.
-      void jobIds;
-      void stationIds;
+      const cleanEmployee = publicEmployee(updated!);
 
       return void res.status(200).json(
         ApiResponse.success('Password set and account activated', {
@@ -297,11 +293,7 @@ export const setPassword = catchAsync(
         .where(inArray(jobs.id, updated.jobIds));
     }
 
-    const { jobIds, stationIds, ...cleanEmployee } = publicEmployee(updated!);
-    // Stripped from the response in favour of the denormalised
-    // `stations` / `jobs` objects above.
-    void jobIds;
-    void stationIds;
+    const cleanEmployee = publicEmployee(updated!);
 
     res.status(200).json(
       ApiResponse.success('Password set and account activated', {
