@@ -1,0 +1,30 @@
+# Builds and runs the production image locally, against the database and
+# secrets in development.env.
+#   docker compose -f infra/docker/compose.dev.yaml up --build
+services:
+  app:
+    container_name: lms-backend
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile
+    image: lms-backend:local
+    ports:
+      - '4000:4000'
+    env_file:
+      - ../../development.env
+    environment:
+      PORT: 4000
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

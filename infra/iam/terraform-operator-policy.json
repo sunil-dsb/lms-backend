@@ -1,0 +1,139 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "NetworkAndCompute",
+      "Effect": "Allow",
+      "Action": "ec2:*",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "ca-central-1" }
+      }
+    },
+    {
+      "Sid": "Database",
+      "Effect": "Allow",
+      "Action": "rds:*",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "aws:RequestedRegion": "ca-central-1" }
+      }
+    },
+    {
+      "Sid": "RdsServiceLinkedRole",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::145018131586:role/aws-service-role/rds.amazonaws.com/*",
+      "Condition": {
+        "StringEquals": { "iam:AWSServiceName": "rds.amazonaws.com" }
+      }
+    },
+    {
+      "Sid": "AppParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:GetParameterHistory",
+        "ssm:DeleteParameter",
+        "ssm:AddTagsToResource",
+        "ssm:RemoveTagsFromResource",
+        "ssm:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:ssm:ca-central-1:145018131586:parameter/lms-backend/*"
+    },
+    {
+      "Sid": "ListParameters",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeParameters",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ParameterEncryption",
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "ssm.ca-central-1.amazonaws.com" }
+      }
+    },
+    {
+      "Sid": "ProjectRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:GetRole",
+        "iam:DeleteRole",
+        "iam:UpdateRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole",
+        "iam:GetRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:DetachRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::145018131586:role/lms-backend-*"
+    },
+    {
+      "Sid": "AttachOnlyTheSsmAgentPolicy",
+      "Effect": "Allow",
+      "Action": "iam:AttachRolePolicy",
+      "Resource": "arn:aws:iam::145018131586:role/lms-backend-*",
+      "Condition": {
+        "ArnEquals": {
+          "iam:PolicyARN": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        }
+      }
+    },
+    {
+      "Sid": "PassInstanceRoleToEc2",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::145018131586:role/lms-backend-*",
+      "Condition": {
+        "StringEquals": { "iam:PassedToService": "ec2.amazonaws.com" }
+      }
+    },
+    {
+      "Sid": "ProjectInstanceProfile",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateInstanceProfile",
+        "iam:GetInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:TagInstanceProfile",
+        "iam:UntagInstanceProfile"
+      ],
+      "Resource": "arn:aws:iam::145018131586:instance-profile/lms-backend-*"
+    },
+    {
+      "Sid": "GithubOidcProvider",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateOpenIDConnectProvider",
+        "iam:GetOpenIDConnectProvider",
+        "iam:DeleteOpenIDConnectProvider",
+        "iam:TagOpenIDConnectProvider",
+        "iam:UntagOpenIDConnectProvider",
+        "iam:UpdateOpenIDConnectProviderThumbprint",
+        "iam:AddClientIDToOpenIDConnectProvider",
+        "iam:RemoveClientIDFromOpenIDConnectProvider"
+      ],
+      "Resource": "arn:aws:iam::145018131586:oidc-provider/token.actions.githubusercontent.com"
+    },
+    {
+      "Sid": "ListOidcProviders",
+      "Effect": "Allow",
+      "Action": "iam:ListOpenIDConnectProviders",
+      "Resource": "*"
+    }
+  ]
+}

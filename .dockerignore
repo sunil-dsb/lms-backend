@@ -1,0 +1,16 @@
+node_modules
+dist
+npm-debug.log
+*.log
+.git
+.github
+.husky
+.env
+.env.*
+development.env
+.nyc_output
+coverage
+.DS_Store
+.vscode
+.idea
+infra/terraform
