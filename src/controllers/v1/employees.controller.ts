@@ -23,6 +23,7 @@ import {
 
 import {
   sendInviteMagicLink,
+  getActiveInviteUrl,
   createEmployeeTransaction,
   updateEmployeeTransaction,
 } from '../../services/employee/employee.service.ts';
@@ -335,9 +336,21 @@ export const getEmployee = catchAsync(
       row.locationName,
     );
 
+    let inviteUrl: string | undefined = undefined;
+    if (row.employee.status === 'pending') {
+      inviteUrl = await getActiveInviteUrl(
+        row.employee.email,
+        row.employee.languagePref,
+      );
+    }
+
     res.status(200).json(
       ApiResponse.success('Employee retrieved successfully', {
-        employee: employeeResponse,
+        employee: {
+          ...employeeResponse,
+          ...(inviteUrl ? { inviteUrl } : {}),
+        },
+        ...(inviteUrl ? { inviteUrl } : {}),
       }),
     );
   },
@@ -365,17 +378,41 @@ export const updateEmployee = catchAsync(
       throw parsed.error;
     }
 
+    const [existing] = await db
+      .select({
+        email: employees.email,
+        userId: employees.userId,
+        status: employees.status,
+      })
+      .from(employees)
+      .where(eq(employees.id, param.data.id))
+      .limit(1);
+
     const { employee: updated } = await updateEmployeeTransaction(
       param.data.id,
       parsed.data,
       admin.id,
     );
 
+    let inviteUrl: string | undefined = undefined;
+    if (
+      existing &&
+      existing.email !== updated.email &&
+      (!updated.userId || updated.status === 'pending')
+    ) {
+      inviteUrl = await sendInviteMagicLink({
+        email: updated.email,
+        name: updated.name,
+        languagePref: updated.languagePref,
+      });
+    }
+
     const employeeResponse = await buildEmployeeResponse(updated);
 
     res.status(200).json(
       ApiResponse.success('Employee updated successfully', {
         employee: employeeResponse,
+        ...(inviteUrl ? { inviteUrl } : {}),
       }),
     );
   },

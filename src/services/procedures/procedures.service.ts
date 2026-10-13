@@ -798,6 +798,21 @@ export async function publishProcedure(id: string): Promise<PublicProcedure> {
   });
 }
 
+/** Delete a procedure by ID.
+ *  Throws 404 when the id doesn't exist. */
+export async function deleteProcedure(id: string): Promise<void> {
+  const [deleted] = await db
+    .delete(procedures)
+    .where(eq(procedures.id, id))
+    .returning({ id: procedures.id });
+
+  if (!deleted) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+}
+
 function assertRecipeIngredientsAlign(
   blocks: Block[],
   lang: 'en' | 'es',

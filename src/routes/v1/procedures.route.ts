@@ -9,6 +9,7 @@ import {
   archiveProcedure,
   unarchiveProcedure,
   updateProcedure,
+  deleteProcedure,
   getAssignedProcedures,
 } from '../../controllers/v1/procedures.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
@@ -48,6 +49,17 @@ proceduresRoute.put(
   requireAuth,
   requireRoles(['super_admin']),
   updateProcedure,
+);
+
+proceduresRoute.delete(
+  '/:id',
+  requireAuth,
+  requireRoles(['super_admin']),
+  createLimiter({
+    limit: 20,
+    message: 'Too many procedure deletions, please try again later.',
+  }),
+  deleteProcedure,
 );
 
 proceduresRoute.get(

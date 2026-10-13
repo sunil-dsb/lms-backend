@@ -1,14 +1,18 @@
 import express, { type Router } from 'express';
 import {
   listCategories,
+  getCategory,
   createCategory,
   updateCategory,
   deleteCategory,
+  archiveCategory,
+  unarchiveCategory,
 } from '../../controllers/v1/categories.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
 
 import {
+  listSubcategories,
   listSubcategoriesAdmin,
   createSubcategoryAdmin,
   updateSubcategoryAdmin,
@@ -53,6 +57,32 @@ categoriesRoute.delete(
   }),
   deleteCategory,
 );
+categoriesRoute.post(
+  '/:id/archive',
+  requireAuth,
+  requireRoles(['super_admin']),
+  createLimiter({
+    limit: 20,
+    message: 'Too many category archive requests, please try again later.',
+  }),
+  archiveCategory,
+);
+categoriesRoute.post(
+  '/:id/unarchive',
+  requireAuth,
+  requireRoles(['super_admin']),
+  createLimiter({
+    limit: 20,
+    message: 'Too many category unarchive requests, please try again later.',
+  }),
+  unarchiveCategory,
+);
+
+// Subcategories list (all subcategories, optional ?categoryId=)
+categoriesRoute.get('/subcategories', requireAuth, listSubcategories);
+
+// Single category read route
+categoriesRoute.get('/:id', requireAuth, getCategory);
 
 // Admin routes for Subcategories
 categoriesRoute.get(

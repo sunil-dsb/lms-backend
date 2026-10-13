@@ -13,6 +13,7 @@ import {
   updateProcedureInputSchema,
 } from '../../db/procedure.schema.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import { uuidIdParam } from '../../shared/common.validation.ts';
 import { z } from 'zod';
 
 const updateStationsSchema = z.object({
@@ -384,6 +385,38 @@ export const unarchiveProcedure = catchAsync(
       .status(200)
       .json(
         ApiResponse.success('Procedure unarchived successfully', { procedure }),
+      );
+  },
+);
+
+// DELETE /api/v1/procedures/:id  (super_admin only)
+export const deleteProcedure = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new ApiError('Missing procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const param = uuidIdParam.safeParse(req.params);
+    if (!param.success) {
+      throw new ApiError('Invalid procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    await proceduresService.deleteProcedure(param.data.id);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Procedure deleted successfully', { ok: true }),
       );
   },
 );

@@ -9,6 +9,50 @@ import * as subcategoriesService from '../../services/categories/subcategories.s
 import catchAsync from '../../shared/utils/catchAsync.ts';
 import { getPaginationParams } from '../../shared/utils/pagination.ts';
 
+export const listSubcategories = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) throw new ApiError('Not authenticated', 401);
+
+    const rawCategoryId = req.query.categoryId ?? req.query.category_id;
+    const categoryId =
+      typeof rawCategoryId === 'string' && rawCategoryId.trim().length > 0
+        ? rawCategoryId.trim()
+        : undefined;
+
+    const { page, limit, search } = getPaginationParams(req.query);
+
+    const items = await subcategoriesService.listSubcategories(
+      categoryId,
+      page,
+      limit,
+      search,
+    );
+    res.status(200).json(
+      ApiResponse.success('Subcategories retrieved successfully', {
+        subcategories: items.items,
+        meta: items.meta,
+      }),
+    );
+  },
+);
+
+export const getSubcategory = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) throw new ApiError('Not authenticated', 401);
+    const { id } = req.params;
+    if (!id || typeof id !== 'string') {
+      throw new ApiError('Missing subcategory id', 400);
+    }
+
+    const subcategory = await subcategoriesService.getSubcategoryById(id);
+    res.status(200).json(
+      ApiResponse.success('Subcategory retrieved successfully', {
+        subcategory,
+      }),
+    );
+  },
+);
+
 export const listSubcategoriesAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) throw new ApiError('Not authenticated', 401);

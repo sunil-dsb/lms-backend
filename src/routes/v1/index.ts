@@ -8,6 +8,7 @@ import stationsRoute from './stations.route.ts';
 import locationsRoute from './locations.route.ts';
 import jobsRoute from './jobs.route.ts';
 import categoriesRoute from './categories.route.ts';
+import subcategoriesRoute from './subcategories.route.ts';
 import quizzesRoute from './quiz.route.ts';
 
 const router: Router = express.Router();
@@ -49,6 +50,10 @@ const defaultRoutes = [
   {
     path: '/quizzes',
     route: quizzesRoute,
+  },
+  {
+    path: '/subcategories',
+    route: subcategoriesRoute,
   },
 ];
 

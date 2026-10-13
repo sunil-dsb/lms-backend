@@ -332,18 +332,22 @@ New passwords need 8 or more characters with a lowercase letter, an uppercase le
 | PATCH  | `/:id`      | super_admin | `{ name?, stationIds? }`                                                                                         |
 | DELETE | `/:id`      | super_admin | Refused if employees use the job                                                                                 |
 
-### Categories and subcategories - `/api/v1/categories`
+### Categories and subcategories - `/api/v1/categories`, `/api/v1/subcategories`
 
-| Method | Path                             | Access      |
-| ------ | -------------------------------- | ----------- |
-| GET    | `/`                              | session     |
-| POST   | `/`                              | super_admin |
-| PATCH  | `/:id`                           | super_admin |
-| DELETE | `/:id`                           | super_admin |
-| GET    | `/:categoryId/subcategories`     | session     |
-| POST   | `/:categoryId/subcategories`     | super_admin |
-| PATCH  | `/:categoryId/subcategories/:id` | super_admin |
-| DELETE | `/:categoryId/subcategories/:id` | super_admin |
+| Method | Path                             | Access      | Notes                                                                                                                |
+| ------ | -------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/`                              | session     | List categories (accepts `?status=active\|archived\|all&search=&page=&limit=`). Response includes `proceduresCount`. |
+| GET    | `/:id`                           | session     | Get single category by ID. Response includes `proceduresCount`.                                                      |
+| POST   | `/`                              | super_admin | Create category                                                                                                      |
+| PATCH  | `/:id`                           | super_admin | Update category                                                                                                      |
+| DELETE | `/:id`                           | super_admin | Delete category                                                                                                      |
+| POST   | `/:id/archive`                   | super_admin | Archive category (`status` -> `archived`)                                                                            |
+| POST   | `/:id/unarchive`                 | super_admin | Unarchive category (`status` -> `active`)                                                                            |
+| GET    | `/subcategories`                 | session     | List subcategories (accepts `?categoryId=&search=&page=&limit=`)                                                     |
+| GET    | `/:categoryId/subcategories`     | session     | List subcategories for a category                                                                                    |
+| POST   | `/:categoryId/subcategories`     | super_admin | Create subcategory                                                                                                   |
+| PATCH  | `/:categoryId/subcategories/:id` | super_admin | Update subcategory                                                                                                   |
+| DELETE | `/:categoryId/subcategories/:id` | super_admin | Delete subcategory                                                                                                   |
 
 ### Procedures - `/api/v1/procedures`
 
@@ -354,6 +358,7 @@ New passwords need 8 or more characters with a lowercase letter, an uppercase le
 | GET    | `/:slug`         | session     | Read one procedure by slug                                                                    |
 | POST   | `/`              | super_admin | Create. Slug is generated from `titleEn` and made unique (`-2`, `-3`, ...)                    |
 | PUT    | `/:id`           | super_admin | Full update, same validation as create                                                        |
+| DELETE | `/:id`           | super_admin | Permanently delete a procedure                                                                |
 | POST   | `/:id/archive`   | super_admin | Saves the current status in `previousStatus`, then sets `archived`                            |
 | POST   | `/:id/unarchive` | super_admin | Restores `previousStatus` (or `draft`)                                                        |
 
