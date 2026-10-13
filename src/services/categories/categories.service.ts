@@ -1,13 +1,14 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 import crypto from 'node:crypto';
-import { asc, eq, count, ilike, or, SQL } from 'drizzle-orm';
+import { asc, eq, count, ilike, or, and, inArray, sql, SQL } from 'drizzle-orm';
 import {
   formatPaginatedResult,
   type PaginatedResult,
 } from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
-import { categories } from '../../db/categories.schema.ts';
+import { categories, type CategoryStatus } from '../../db/categories.schema.ts';
 import { subcategories } from '../../db/subcategories.schema.ts';
+import { procedures } from '../../db/schema/procedures.schema.ts';
 
 export interface PublicCategory {
   id: string;
@@ -15,10 +16,13 @@ export interface PublicCategory {
   nameEs: string;
   categoryType: string;
   categoryIcon: string;
+  status: CategoryStatus;
+  proceduresCount: number;
 }
 
 export function publicCategory(
   row: Readonly<typeof categories.$inferSelect>,
+  proceduresCount: number = 0,
 ): PublicCategory {
   return {
     id: row.id,
@@ -26,7 +30,43 @@ export function publicCategory(
     nameEs: row.nameEs,
     categoryType: row.categoryType,
     categoryIcon: row.categoryIcon,
+    status: row.status,
+    proceduresCount,
   };
+}
+
+export async function getProceduresCountForCategoryIds(
+  categoryIds: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (categoryIds.length === 0) {
+    return map;
+  }
+
+  const countRows = await db
+    .select({
+      categoryId: subcategories.categoryId,
+      count: sql<number>`count(${procedures.id})::int`,
+    })
+    .from(subcategories)
+    .innerJoin(procedures, eq(procedures.subcategoryId, subcategories.id))
+    .where(inArray(subcategories.categoryId, categoryIds))
+    .groupBy(subcategories.categoryId);
+
+  for (const row of countRows) {
+    if (row.categoryId) {
+      map.set(row.categoryId, Number(row.count) || 0);
+    }
+  }
+
+  return map;
+}
+
+export async function getProceduresCountForCategoryId(
+  categoryId: string,
+): Promise<number> {
+  const map = await getProceduresCountForCategoryIds([categoryId]);
+  return map.get(categoryId) ?? 0;
 }
 
 export interface CategoryCreateInput {
@@ -50,9 +90,13 @@ export async function listCategories(
   page: number = 1,
   limit: number = 10,
   search?: string,
+  status?: CategoryStatus | 'all',
 ): Promise<PaginatedResult<PublicCategory>> {
   const offset = (page - 1) * limit;
   const conditions: SQL[] = [];
+  if (status && status !== 'all') {
+    conditions.push(eq(categories.status, status));
+  }
   if (search) {
     conditions.push(
       or(
@@ -61,7 +105,7 @@ export async function listCategories(
       )!,
     );
   }
-  const whereClause = conditions.length ? conditions[0] : undefined;
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const rows = await db
     .select()
@@ -76,12 +120,37 @@ export async function listCategories(
     .from(categories)
     .where(whereClause);
 
+  if (rows.length === 0) {
+    return formatPaginatedResult([], countRes?.total ?? 0, page, limit);
+  }
+
+  const countMap = await getProceduresCountForCategoryIds(
+    rows.map((r) => r.id),
+  );
+
   return formatPaginatedResult(
-    rows.map(publicCategory),
+    rows.map((row) => publicCategory(row, countMap.get(row.id) ?? 0)),
     countRes?.total ?? 0,
     page,
     limit,
   );
+}
+
+export async function getCategory(id: string): Promise<PublicCategory> {
+  const [row] = await db
+    .select()
+    .from(categories)
+    .where(eq(categories.id, id))
+    .limit(1);
+
+  if (!row) {
+    throw Object.assign(new ApiError('Category not found', 404), {
+      errorCode: 'CATEGORY_NOT_FOUND',
+    });
+  }
+
+  const proceduresCount = await getProceduresCountForCategoryId(id);
+  return publicCategory(row, proceduresCount);
 }
 
 export async function createCategory(
@@ -131,12 +200,13 @@ export async function createCategory(
     .from(categories)
     .where(eq(categories.id, id))
     .limit(1);
-  return publicCategory(row!);
+  return publicCategory(row!, 0);
 }
 
 export interface SubcategoryCreateInput {
   nameEn: string;
   nameEs: string;
+  subcategoryIcon: string;
 }
 
 export async function createSubcategory(
@@ -162,7 +232,7 @@ export async function createSubcategory(
     nameEn: input.nameEn,
     nameEs: input.nameEs,
     createdBy: actor.userId,
-    subcategoryIcon: '',
+    subcategoryIcon: input.subcategoryIcon,
   });
 
   const [row] = await db
@@ -247,7 +317,8 @@ export async function updateCategory(id: string, patch: CategoryPatchInput) {
     .from(categories)
     .where(eq(categories.id, id))
     .limit(1);
-  return publicCategory(row!);
+  const proceduresCount = await getProceduresCountForCategoryId(id);
+  return publicCategory(row!, proceduresCount);
 }
 
 export async function deleteCategory(id: string): Promise<void> {
@@ -262,4 +333,66 @@ export async function deleteCategory(id: string): Promise<void> {
     });
   }
   await db.delete(categories).where(eq(categories.id, id));
+}
+
+/** Archive a category (active → archived).
+ *  Throws 404 when the id doesn't exist, 409 when already archived. */
+export async function archiveCategory(id: string): Promise<PublicCategory> {
+  const [existing] = await db
+    .select()
+    .from(categories)
+    .where(eq(categories.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Category not found', 404), {
+      errorCode: 'CATEGORY_NOT_FOUND',
+    });
+  }
+
+  if (existing.status === 'archived') {
+    throw Object.assign(new ApiError('Category is already archived', 409), {
+      errorCode: 'ALREADY_ARCHIVED',
+    });
+  }
+
+  const [row] = await db
+    .update(categories)
+    .set({ status: 'archived' })
+    .where(eq(categories.id, id))
+    .returning();
+
+  const proceduresCount = await getProceduresCountForCategoryId(id);
+  return publicCategory(row!, proceduresCount);
+}
+
+/** Unarchive a category (archived → active).
+ *  Throws 404 when the id doesn't exist, 409 when not archived. */
+export async function unarchiveCategory(id: string): Promise<PublicCategory> {
+  const [existing] = await db
+    .select()
+    .from(categories)
+    .where(eq(categories.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Category not found', 404), {
+      errorCode: 'CATEGORY_NOT_FOUND',
+    });
+  }
+
+  if (existing.status !== 'archived') {
+    throw Object.assign(new ApiError('Category is not archived', 409), {
+      errorCode: 'NOT_ARCHIVED',
+    });
+  }
+
+  const [row] = await db
+    .update(categories)
+    .set({ status: 'active' })
+    .where(eq(categories.id, id))
+    .returning();
+
+  const proceduresCount = await getProceduresCountForCategoryId(id);
+  return publicCategory(row!, proceduresCount);
 }

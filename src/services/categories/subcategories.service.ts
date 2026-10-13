@@ -14,6 +14,7 @@ export interface PublicSubcategory {
   categoryId: string;
   nameEn: string;
   nameEs: string;
+  subcategoryIcon: string;
 }
 
 export function publicSubcategory(
@@ -24,18 +25,22 @@ export function publicSubcategory(
     categoryId: s.categoryId,
     nameEn: s.nameEn,
     nameEs: s.nameEs,
+    subcategoryIcon: s.subcategoryIcon,
   };
 }
 
 export async function listSubcategories(
-  categoryId: string,
+  categoryId?: string,
   page: number = 1,
   limit: number = 10,
   search?: string,
 ): Promise<PaginatedResult<PublicSubcategory>> {
   const offset = (page - 1) * limit;
 
-  const conditions: SQL[] = [eq(subcategories.categoryId, categoryId)];
+  const conditions: SQL[] = [];
+  if (categoryId) {
+    conditions.push(eq(subcategories.categoryId, categoryId));
+  }
   if (search) {
     conditions.push(
       or(
@@ -44,7 +49,7 @@ export async function listSubcategories(
       )!,
     );
   }
-  const whereClause = and(...conditions);
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const rows = await db
     .select()
@@ -70,6 +75,7 @@ export async function listSubcategories(
 export interface SubcategoryCreateInput {
   nameEn: string;
   nameEs: string;
+  subcategoryIcon: string;
 }
 
 export async function createSubcategory(
@@ -94,8 +100,8 @@ export async function createSubcategory(
     categoryId,
     nameEn: input.nameEn,
     nameEs: input.nameEs,
+    subcategoryIcon: input.subcategoryIcon,
     createdBy: actor.userId,
-    subcategoryIcon: '',
   });
 
   const [row] = await db
@@ -109,6 +115,7 @@ export async function createSubcategory(
 export interface SubcategoryPatchInput {
   nameEn?: string | undefined;
   nameEs?: string | undefined;
+  subcategoryIcon?: string | undefined;
 }
 
 export async function updateSubcategory(
@@ -152,4 +159,20 @@ export async function deleteSubcategory(id: string): Promise<void> {
     });
   }
   await db.delete(subcategories).where(eq(subcategories.id, id));
+}
+
+export async function getSubcategoryById(
+  id: string,
+): Promise<PublicSubcategory> {
+  const [row] = await db
+    .select()
+    .from(subcategories)
+    .where(eq(subcategories.id, id))
+    .limit(1);
+  if (!row) {
+    throw Object.assign(new ApiError('Subcategory not found', 404), {
+      errorCode: 'SUBCATEGORY_NOT_FOUND',
+    });
+  }
+  return publicSubcategory(row);
 }

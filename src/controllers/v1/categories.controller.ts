@@ -9,6 +9,12 @@ import { subcategoryCreateSchema } from '../../shared/validations/subcategories.
 import * as categoriesService from '../../services/categories/categories.service.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
 import { getPaginationParams } from '../../shared/utils/pagination.ts';
+import { uuidIdParam } from '../../shared/common.validation.ts';
+import {
+  categoryStatuses,
+  type CategoryStatus,
+} from '../../db/categories.schema.ts';
+
 export const listCategories = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.employee) {
@@ -18,13 +24,54 @@ export const listCategories = catchAsync(
     }
 
     const { page, limit, search } = getPaginationParams(req.query);
-    const cats = await categoriesService.listCategories(page, limit, search);
+    const rawStatus = req.query.status;
+    let statusFilter: CategoryStatus | 'all' | undefined = undefined;
+    if (typeof rawStatus === 'string') {
+      const normalized = rawStatus.toLowerCase();
+      if (
+        normalized === 'all' ||
+        categoryStatuses.includes(normalized as CategoryStatus)
+      ) {
+        statusFilter = normalized as CategoryStatus | 'all';
+      }
+    }
+
+    const cats = await categoriesService.listCategories(
+      page,
+      limit,
+      search,
+      statusFilter,
+    );
     res.status(200).json(
       ApiResponse.success('Categories retrieved successfully', {
         categories: cats.items,
         meta: cats.meta,
       }),
     );
+  },
+);
+
+export const getCategory = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const param = uuidIdParam.safeParse(req.params);
+    if (!param.success) {
+      throw new ApiError('Invalid category id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const category = await categoriesService.getCategory(param.data.id);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Category retrieved successfully', { category }),
+      );
   },
 );
 
@@ -136,6 +183,54 @@ export const deleteCategory = catchAsync(
     res
       .status(200)
       .json(ApiResponse.success('Category deleted successfully', { ok: true }));
+  },
+);
+
+export const archiveCategory = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const param = uuidIdParam.safeParse(req.params);
+    if (!param.success) {
+      throw new ApiError('Invalid category id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const category = await categoriesService.archiveCategory(param.data.id);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Category archived successfully', { category }),
+      );
+  },
+);
+
+export const unarchiveCategory = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const param = uuidIdParam.safeParse(req.params);
+    if (!param.success) {
+      throw new ApiError('Invalid category id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const category = await categoriesService.unarchiveCategory(param.data.id);
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Category unarchived successfully', { category }),
+      );
   },
 );
 

@@ -1,6 +1,6 @@
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, and, ne, gt, desc, ilike } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees } from '../../db/index.ts';
+import { employees, user, verification } from '../../db/index.ts';
 import { locations, stations, jobs } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 import type { LanguagePref, Role, EmployeeStatus } from '../../db/index.ts';
@@ -50,6 +50,30 @@ export async function sendInviteMagicLink(input: {
   const token = parsed.searchParams.get('token');
 
   return `${frontendUrl}/${input.languagePref}/invite/token?token=${token}`;
+}
+
+/**
+ * Looks up the latest active (non-expired) invite magic link URL for a pending employee.
+ */
+export async function getActiveInviteUrl(
+  email: string,
+  languagePref: LanguagePref,
+): Promise<string | undefined> {
+  const [ver] = await db
+    .select({ identifier: verification.identifier })
+    .from(verification)
+    .where(
+      and(
+        ilike(verification.value, `%"email":"${email}"%`),
+        gt(verification.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(desc(verification.createdAt))
+    .limit(1);
+
+  if (!ver) return undefined;
+  const baseUrl = config.frontendBaseUrl.replace(/\/+$/, '');
+  return `${baseUrl}/${languagePref}/invite/token?token=${ver.identifier}`;
 }
 
 // ============================================================================
@@ -181,7 +205,12 @@ export async function updateEmployeeTransaction(
 ) {
   return db.transaction(async (tx) => {
     const [existing] = await tx
-      .select({ id: employees.id, email: employees.email })
+      .select({
+        id: employees.id,
+        email: employees.email,
+        userId: employees.userId,
+        name: employees.name,
+      })
       .from(employees)
       .where(eq(employees.id, id))
       .limit(1);
@@ -228,15 +257,53 @@ export async function updateEmployeeTransaction(
       const [emailHit] = await tx
         .select({ id: employees.id })
         .from(employees)
-        .where(eq(employees.email, input.email))
+        .where(and(eq(employees.email, input.email), ne(employees.id, id)))
         .limit(1);
       if (emailHit)
         throw new ApiError('That email is already in use.', 409, true, '', {
           code: 'EMAIL_TAKEN',
         });
+
+      // Also ensure the new email is not already taken by another Better Auth user
+      const [userHit] = await tx
+        .select({ id: user.id })
+        .from(user)
+        .where(eq(user.email, input.email))
+        .limit(1);
+      if (userHit && userHit.id !== existing.userId) {
+        throw new ApiError(
+          'That email is already in use by another account.',
+          409,
+          true,
+          '',
+          { code: 'EMAIL_TAKEN' },
+        );
+      }
+
+      // Sync the new email to Better Auth's user table
+      if (existing.userId) {
+        await tx
+          .update(user)
+          .set({ email: input.email })
+          .where(eq(user.id, existing.userId));
+      } else {
+        // If not linked yet, update any user row that was created with the old email
+        await tx
+          .update(user)
+          .set({ email: input.email })
+          .where(eq(user.email, existing.email));
+      }
     }
 
     const employeeName = normalizeName(input.name);
+
+    // Sync updated name to user table if linked
+    if (existing.userId && employeeName !== existing.name) {
+      await tx
+        .update(user)
+        .set({ name: employeeName })
+        .where(eq(user.id, existing.userId));
+    }
 
     const [updated] = await tx
       .update(employees)
