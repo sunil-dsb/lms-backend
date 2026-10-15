@@ -29,6 +29,13 @@
       "when": 1791869406559,
       "tag": "0003_add_category_status",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792061144334,
+      "tag": "0004_safe_mimic",
+      "breakpoints": true
     }
   ]
 }
