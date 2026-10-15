@@ -83,7 +83,11 @@
       "@typescript-eslint/parser>typescript": "$@typescript/typescript6",
       "@typescript-eslint/typescript-estree>typescript": "$@typescript/typescript6",
       "proxy-addr": "^2.0.8",
-      "shell-quote": "^1.11.0"
+      "shell-quote": "^1.11.0",
+      "esbuild": "^0.25.0",
+      "uuid": "^11.1.1",
+      "argparse": "^2.0.1",
+      "chokidar": "^4.0.3"
     }
   }
 }
