@@ -45,8 +45,36 @@ app.use((req: Request, res: Response, next) => {
 // -------------------------
 app.use(
   cors({
-    origin: config.cors, // using config file
-    credentials: true, // required so the HttpOnly cookie crosses origins
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. curl, server-to-server, mobile)
+      if (!origin) return callback(null, true);
+
+      const allowedList = config.cors || [];
+      const isAllowedExplicit = allowedList.includes(origin);
+      const isLocalOrTunnel =
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+        /\.devtunnels\.ms$/.test(origin);
+
+      if (
+        isAllowedExplicit ||
+        isLocalOrTunnel ||
+        config.env === 'development'
+      ) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS not allowed for origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'QUERY', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Request-Id',
+      'X-Requested-With',
+      'x-request-id',
+      'x-requested-with',
+    ],
+    exposedHeaders: ['X-Request-Id'],
   }),
 );
 

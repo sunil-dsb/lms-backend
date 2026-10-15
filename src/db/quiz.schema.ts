@@ -1,1 +1,1 @@
-export * from './schema/quizzes.schema.ts';
+export * from './schema/quiz.schema.ts';

@@ -17,7 +17,7 @@ import {
 
 export const listCategories = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -53,7 +53,7 @@ export const listCategories = catchAsync(
 
 export const getCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -136,7 +136,7 @@ export const createSubcategory = catchAsync(
 
 export const updateCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -166,7 +166,7 @@ export const updateCategory = catchAsync(
 // DELETE /api/admin/library/categories/:id
 export const deleteCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -188,7 +188,7 @@ export const deleteCategory = catchAsync(
 
 export const archiveCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -212,7 +212,7 @@ export const archiveCategory = catchAsync(
 
 export const unarchiveCategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -236,7 +236,7 @@ export const unarchiveCategory = catchAsync(
 
 export const updateSubcategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });

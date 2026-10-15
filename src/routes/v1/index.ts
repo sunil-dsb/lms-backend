@@ -10,6 +10,11 @@ import jobsRoute from './jobs.route.ts';
 import categoriesRoute from './categories.route.ts';
 import subcategoriesRoute from './subcategories.route.ts';
 import quizzesRoute from './quiz.route.ts';
+import { importProcedure } from '../../controllers/v1/procedures.controller.ts';
+import { requireAuth } from '../../config/middleware.ts';
+import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
+import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
+import { documentUpload } from '../../shared/middleware/upload.middleware.ts';
 
 const router: Router = express.Router();
 
@@ -68,5 +73,18 @@ if (config.env === 'development') {
     router.use(route.path, route.route);
   });
 }
+
+// Alias route: POST /api/v1/import/procedures
+router.post(
+  '/import/procedures',
+  requireAuth,
+  requireRoles(['super_admin']),
+  createLimiter({
+    limit: 20,
+    message: 'Too many procedure import requests, please try again later.',
+  }),
+  documentUpload.single('file'),
+  importProcedure,
+);
 
 export default router;

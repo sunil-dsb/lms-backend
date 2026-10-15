@@ -11,13 +11,21 @@ import { getPaginationParams } from '../../shared/utils/pagination.ts';
 
 export const listSubcategories = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) throw new ApiError('Not authenticated', 401);
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
 
     const rawCategoryId = req.query.categoryId ?? req.query.category_id;
     const categoryId =
       typeof rawCategoryId === 'string' && rawCategoryId.trim().length > 0
         ? rawCategoryId.trim()
         : undefined;
+
+    const statusParam = req.query.status as string | undefined;
+    const status =
+      statusParam === 'all'
+        ? 'all'
+        : statusParam === 'archived'
+          ? 'archived'
+          : 'active';
 
     const { page, limit, search } = getPaginationParams(req.query);
 
@@ -26,6 +34,7 @@ export const listSubcategories = catchAsync(
       page,
       limit,
       search,
+      status,
     );
     res.status(200).json(
       ApiResponse.success('Subcategories retrieved successfully', {
@@ -38,7 +47,7 @@ export const listSubcategories = catchAsync(
 
 export const getSubcategory = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) throw new ApiError('Not authenticated', 401);
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
     const { id } = req.params;
     if (!id || typeof id !== 'string') {
       throw new ApiError('Missing subcategory id', 400);
@@ -55,9 +64,17 @@ export const getSubcategory = catchAsync(
 
 export const listSubcategoriesAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) throw new ApiError('Not authenticated', 401);
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
     const { categoryId } = req.params;
     if (!categoryId) throw new ApiError('Missing categoryId', 400);
+
+    const statusParam = req.query.status as string | undefined;
+    const status =
+      statusParam === 'all'
+        ? 'all'
+        : statusParam === 'archived'
+          ? 'archived'
+          : 'active';
 
     const { page, limit, search } = getPaginationParams(req.query);
 
@@ -66,6 +83,7 @@ export const listSubcategoriesAdmin = catchAsync(
       page,
       limit,
       search,
+      status,
     );
     res.status(200).json(
       ApiResponse.success('Subcategories retrieved successfully', {
@@ -100,7 +118,7 @@ export const createSubcategoryAdmin = catchAsync(
 
 export const updateSubcategoryAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) throw new ApiError('Not authenticated', 401);
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
     const { id } = req.params;
     if (!id) throw new ApiError('Missing subcategory id', 400);
 
@@ -121,7 +139,7 @@ export const updateSubcategoryAdmin = catchAsync(
 
 export const deleteSubcategoryAdmin = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) throw new ApiError('Not authenticated', 401);
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
     const { id } = req.params;
     if (!id) throw new ApiError('Missing subcategory id', 400);
 
@@ -131,5 +149,35 @@ export const deleteSubcategoryAdmin = catchAsync(
       .json(
         ApiResponse.success('Subcategory deleted successfully', { ok: true }),
       );
+  },
+);
+
+export const archiveSubcategoryAdmin = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
+    const { id } = req.params;
+    if (!id) throw new ApiError('Missing subcategory id', 400);
+
+    const item = await subcategoriesService.archiveSubcategory(id as string);
+    res.status(200).json(
+      ApiResponse.success('Subcategory archived successfully', {
+        subcategory: item,
+      }),
+    );
+  },
+);
+
+export const unarchiveSubcategoryAdmin = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.userId) throw new ApiError('Not authenticated', 401);
+    const { id } = req.params;
+    if (!id) throw new ApiError('Missing subcategory id', 400);
+
+    const item = await subcategoriesService.unarchiveSubcategory(id as string);
+    res.status(200).json(
+      ApiResponse.success('Subcategory unarchived successfully', {
+        subcategory: item,
+      }),
+    );
   },
 );

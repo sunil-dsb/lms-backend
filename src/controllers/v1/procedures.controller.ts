@@ -3,6 +3,8 @@ import ApiError from '../../shared/utils/ApiError.ts';
 import type { Request, Response } from 'express';
 
 import * as proceduresService from '../../services/procedures/procedures.service.ts';
+import { extractDocumentText } from '../../services/procedures/document-parser.service.ts';
+import { extractProcedureFieldsWithAi } from '../../services/procedures/procedure-ai.service.ts';
 import { getPaginationParams } from '../../shared/utils/pagination.ts';
 import {
   procedureStatuses,
@@ -25,23 +27,17 @@ const updateStationsSchema = z.object({
 // Procedures
 // ============================================================================
 
-// POST /api/admin/library/procedures
+// POST /api/admin/library/procedures  (super_admin only — auth enforced by middleware)
 export const createProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
     const parsed = createProcedureInputSchema.safeParse(req.body);
     if (!parsed.success) {
       throw parsed.error;
     }
 
     const procedure = await proceduresService.createProcedure(parsed.data, {
-      employeeId: req.employee.id,
-      userId: req.employee.userId,
+      employeeId: '',
+      userId: req.userId,
     });
     res
       .status(201)
@@ -51,15 +47,9 @@ export const createProcedure = catchAsync(
   },
 );
 
-// PUT /api/v1/procedures/:id
+// PUT /api/v1/procedures/:id  (super_admin only — auth enforced by middleware)
 export const updateProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       throw new ApiError('Missing procedure id', 400, true, '', {
@@ -81,16 +71,10 @@ export const updateProcedure = catchAsync(
   },
 );
 
-// GET /api/v1/procedures
+// GET /api/v1/procedures  (super_admin only — auth enforced by middleware)
 export const getAllProcedures = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const { page, limit, search } = getPaginationParams(req.query);
-
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
 
     const paginatedResult = await proceduresService.listProcedures(
       { search },
@@ -106,17 +90,17 @@ export const getAllProcedures = catchAsync(
   },
 );
 
-// GET /api/v1/procedures/assigned
+// GET /api/v1/procedures/assigned  (any logged-in employee)
 export const getAssignedProcedures = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
     }
 
     const { page, limit, search } = getPaginationParams(req.query);
-    const stationIds = req.employee.stationIds || [];
+    const stationIds = req.employee?.stationIds || [];
     const scope = typeof req.query.scope === 'string' ? req.query.scope : 'all';
     const categoryId =
       typeof req.query.categoryId === 'string' &&
@@ -125,15 +109,15 @@ export const getAssignedProcedures = catchAsync(
         : undefined;
 
     const isAdmin =
-      Boolean(req.isSuperAdmin) ||
-      req.employee.role === 'super_admin' ||
-      req.employee.role === 'manager';
+      Boolean(req.isSuperAdmin) || req.employee?.role === 'manager';
 
     const paginatedResult = await proceduresService.listProcedures(
       {
         status: 'published',
         stationIds,
-        assignedEmployeeId: !isAdmin ? req.employee.id || undefined : undefined,
+        assignedEmployeeId: !isAdmin
+          ? req.employee?.id || undefined
+          : undefined,
         scope,
         categoryIds: categoryId ? [categoryId] : undefined,
         search,
@@ -151,15 +135,9 @@ export const getAssignedProcedures = catchAsync(
   },
 );
 
-// GET /api/v1/procedures/filter
+// GET /api/v1/procedures/filter  (super_admin only — auth enforced by middleware)
 export const filterProcedures = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
     // -- status filter --
     const raw = req.query.status;
     let status: ProcedureStatus | undefined;
@@ -253,10 +231,10 @@ export const filterProcedures = catchAsync(
   },
 );
 
-// GET /api/procedures/:slug  (public read â€” any logged-in employee)
+// GET /api/procedures/:slug  (any logged-in employee)
 export const getProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -270,8 +248,10 @@ export const getProcedure = catchAsync(
     }
 
     const procedure = await proceduresService.getProcedureBySlug(slug, {
-      role: req.employee.role,
-      employeeId: req.employee.id,
+      role: req.isSuperAdmin
+        ? 'super_admin'
+        : (req.employee?.role ?? 'employee'),
+      employeeId: req.employee?.id ?? '',
       isSuperAdmin: req.isSuperAdmin,
     });
     if (!procedure) {
@@ -286,15 +266,10 @@ export const getProcedure = catchAsync(
       );
   },
 );
-// POST /api/v1/procedures/:id/publish  (super_admin only)
+
+// POST /api/v1/procedures/:id/publish  (super_admin only — auth enforced by middleware)
 export const publishProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       throw new ApiError('Missing procedure id', 400, true, '', {
@@ -311,14 +286,9 @@ export const publishProcedure = catchAsync(
   },
 );
 
-// PATCH /api/v1/procedures/:id/station (super_admin only, single stationId)
+// PATCH /api/v1/procedures/:id/station  (super_admin only — auth enforced by middleware)
 export const updateProcedureStations = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       throw new ApiError('Missing procedure id', 400, true, '', {
@@ -339,15 +309,9 @@ export const updateProcedureStations = catchAsync(
   },
 );
 
-// POST /api/v1/procedures/:id/archive  (super_admin only)
+// POST /api/v1/procedures/:id/archive  (super_admin only — auth enforced by middleware)
 export const archiveProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       throw new ApiError('Missing procedure id', 400, true, '', {
@@ -364,15 +328,9 @@ export const archiveProcedure = catchAsync(
   },
 );
 
-// POST /api/v1/procedures/:id/unarchive  (super_admin only)
+// POST /api/v1/procedures/:id/unarchive  (super_admin only — auth enforced by middleware)
 export const unarchiveProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       throw new ApiError('Missing procedure id', 400, true, '', {
@@ -389,15 +347,9 @@ export const unarchiveProcedure = catchAsync(
   },
 );
 
-// DELETE /api/v1/procedures/:id  (super_admin only)
+// DELETE /api/v1/procedures/:id  (super_admin only — auth enforced by middleware)
 export const deleteProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
     const id = req.params.id;
     if (typeof id !== 'string' || id.length === 0) {
       throw new ApiError('Missing procedure id', 400, true, '', {
@@ -418,5 +370,49 @@ export const deleteProcedure = catchAsync(
       .json(
         ApiResponse.success('Procedure deleted successfully', { ok: true }),
       );
+  },
+);
+
+// POST /api/v1/procedures/import  (super_admin only — auth enforced by middleware)
+export const importProcedure = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.file) {
+      throw new ApiError(
+        'No document file uploaded. Please attach a PDF, DOCX, CSV, or TXT file under "file".',
+        400,
+        true,
+        '',
+        { code: 'FILE_MISSING' },
+      );
+    }
+
+    // 1. Extract raw text from file
+    const extractedText = await extractDocumentText(req.file);
+
+    // 2. Extract structured fields via AI (OpenAI / OpenRouter)
+    const aiFields = await extractProcedureFieldsWithAi(extractedText);
+
+    // 3. Create draft procedure with null/empty secondary fields as requested
+    const procedure = await proceduresService.createProcedure(
+      {
+        ...aiFields,
+        subcategoryId: null,
+        stationIds: [],
+        quizId: null,
+        procedureImage: null,
+        assignUsers: [],
+        status: 'draft',
+      },
+      {
+        employeeId: '',
+        userId: req.userId,
+      },
+    );
+
+    res.status(201).json(
+      ApiResponse.success('Procedure imported successfully as draft', {
+        procedure,
+      }),
+    );
   },
 );
