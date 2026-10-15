@@ -11,10 +11,12 @@ import {
   updateProcedure,
   deleteProcedure,
   getAssignedProcedures,
+  importProcedure,
 } from '../../controllers/v1/procedures.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
 import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
+import { documentUpload } from '../../shared/middleware/upload.middleware.ts';
 
 const proceduresRoute: Router = express.Router();
 
@@ -42,6 +44,18 @@ proceduresRoute.post(
     message: 'Too many procedures created, please try again later.',
   }),
   createProcedure,
+);
+
+proceduresRoute.post(
+  '/import',
+  requireAuth,
+  requireRoles(['super_admin']),
+  createLimiter({
+    limit: 20,
+    message: 'Too many procedure import requests, please try again later.',
+  }),
+  documentUpload.single('file'),
+  importProcedure,
 );
 
 proceduresRoute.put(

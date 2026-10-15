@@ -3,7 +3,11 @@ import { db } from '../../db/client.ts';
 import { employees, user, verification } from '../../db/index.ts';
 import { locations, stations, jobs } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
-import type { LanguagePref, Role, EmployeeStatus } from '../../db/index.ts';
+import type {
+  LanguagePref,
+  EmployeeRole,
+  EmployeeStatus,
+} from '../../db/index.ts';
 import { auth, magicLinkUrls } from '../../config/auth.ts';
 import config from '../../config/index.ts';
 import crypto from 'node:crypto';
@@ -162,7 +166,7 @@ export async function createEmployeeTransaction(
       employeeCode: input.employeeCode ?? null,
       email: input.email,
       locationId: input.locationId,
-      role: (input.role as Role) ?? 'employee',
+      role: (input.role as EmployeeRole) ?? 'employee',
       jobIds: input.jobIds ?? [],
       stationIds: input.stationIds ?? [],
       languagePref: input.languagePref,
@@ -311,7 +315,7 @@ export async function updateEmployeeTransaction(
         name: employeeName,
         email: input.email,
         locationId: input.locationId,
-        role: (input.role as Role) ?? 'employee',
+        role: (input.role as EmployeeRole) ?? 'employee',
         jobIds: input.jobIds ?? [],
         stationIds: input.stationIds ?? [],
         languagePref: input.languagePref,

@@ -2,14 +2,17 @@ import type { Request, Response } from 'express';
 import catchAsync from '../../shared/utils/catchAsync.ts';
 import ApiResponse from '../../shared/utils/ApiResponse.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
-import { createQuizInputSchema } from '../../db/quiz.schema.ts';
+import {
+  createQuizInputSchema,
+  updateQuizInputSchema,
+} from '../../db/quiz.schema.ts';
 import * as quizzesService from '../../services/quiz/quiz.service.ts';
 import { getPaginationParams } from '../../shared/utils/pagination.ts';
 
 // POST /api/admin/library/quizzes
 export const createQuiz = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -21,7 +24,7 @@ export const createQuiz = catchAsync(
     }
 
     const quiz = await quizzesService.createQuiz(parsed.data, {
-      userId: req.employee.userId,
+      userId: req.userId,
     });
 
     res
@@ -57,5 +60,54 @@ export const listQuizzes = catchAsync(
         meta: quizzes.meta,
       }),
     );
+  },
+);
+
+// PUT /api/v1/quizzes/:id  (super_admin only)
+export const updateQuiz = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.userId) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const { id } = req.params;
+    const quizId = Array.isArray(id) ? id[0] : id;
+    if (!quizId) {
+      throw new ApiError('Quiz ID is required', 400);
+    }
+
+    const parsed = updateQuizInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const quiz = await quizzesService.updateQuiz(quizId, parsed.data);
+
+    res
+      .status(200)
+      .json(ApiResponse.success('Quiz updated successfully', { quiz }));
+  },
+);
+
+// DELETE /api/v1/quizzes/:id  (super_admin only)
+export const deleteQuiz = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.userId) {
+      throw new ApiError('Not authenticated', 401, true, '', {
+        code: 'UNAUTHENTICATED',
+      });
+    }
+
+    const { id } = req.params;
+    const quizId = Array.isArray(id) ? id[0] : id;
+    if (!quizId) {
+      throw new ApiError('Quiz ID is required', 400);
+    }
+
+    await quizzesService.deleteQuiz(quizId);
+
+    res.status(200).json(ApiResponse.success('Quiz deleted successfully'));
   },
 );

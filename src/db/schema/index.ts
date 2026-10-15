@@ -7,4 +7,4 @@ export * from './locations.schema.ts';
 export * from './stations.schema.ts';
 export * from './jobs.schema.ts';
 export * from './subcategories.schema.ts';
-export * from './quizzes.schema.ts';
+export * from './quiz.schema.ts';

@@ -1,40 +1,36 @@
 import 'express';
 import type { Logger } from 'pino';
-import type { Role } from '../db/schema/employees.schema.ts';
+import type { EmployeeRole } from '../db/schema/employees.schema.ts';
 
-/**
- * Shape of the employee row that middleware attaches to `req.employee`
- * after a successful clearance check.
- */
-export interface AuthedEmployee {
+export interface AuthedUser {
   id: string;
-  userId?: string | undefined;
+  name: string;
+  email: string;
+  role: 'super_admin' | 'user';
+}
+
+export interface AuthedEmployee {
+  id: string; // employee UUID
+  userId: string;
   name: string;
   locationId: string;
-  role: Role;
+  role: EmployeeRole; // 'manager' | 'employee'
   email: string | null;
   languagePref: 'en' | 'es';
   status: 'pending' | 'active' | 'deactivated';
+  stationIds?: string[] | null;
+  jobIds?: string[] | null;
 }
 
 declare global {
   namespace Express {
     interface Request {
-      id?: string;
-      userId?: string;
-      log?: Logger;
-      isSuperAdmin?: boolean;
-      /**
-       * Populated by `requireAuth` with `{ id, locationId, role }` so any
-       * controller behind any auth-only mount can read basic identity.
-       */
-      employee?: Partial<AuthedEmployee> & {
-        id: string;
-        userId?: string | undefined;
-        locationId: string;
-        role: Role | 'super_admin';
-        stationIds?: string[] | null;
-      };
+      id?: string | undefined;
+      userId?: string | undefined; // Always populated when authenticated
+      user?: AuthedUser | undefined; // Platform user from `user` table
+      isSuperAdmin?: boolean | undefined; // Convenience flag: user.role === 'super_admin'
+      employee?: AuthedEmployee | undefined; // Only present if user is a manager or employee!
+      log?: Logger | undefined;
     }
   }
 }

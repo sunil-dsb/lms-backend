@@ -1,11 +1,17 @@
 import ApiError from '../../shared/utils/ApiError.ts';
 
-import { employees } from '../../db/index.ts';
 import { auth } from '../../config/auth.ts';
 import type { Request } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
 import { db } from '../../db/client.ts';
-import { user, session, stations, jobs } from '../../db/index.ts';
+import {
+  user,
+  session,
+  stations,
+  jobs,
+  employees,
+  SUPER_ADMIN_USER_ROLE,
+} from '../../db/index.ts';
 import { eq, inArray } from 'drizzle-orm';
 
 type Employee = typeof employees.$inferSelect;
@@ -208,25 +214,56 @@ export async function getSessionService(req: Request) {
 
 // ============================================================================
 // forgotPasswordService
-// Delegates to Better Auth's emailOtp plugin:
-//   auth.api.requestPasswordResetEmailOTP({ body: { email } })
-// Better Auth handles OTP generation, storage in the verification table,
-// and triggers sendVerificationOTP (defined in auth.ts) to send the email.
+// Checks if the user/employee exists in our database and has an active account.
+// If valid, delegates to Better Auth's emailOtp plugin to generate and send OTP.
+// If the user doesn't exist or is not active, returns silently to prevent enumeration.
 // ============================================================================
 
 export async function forgotPasswordService(email: string): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // 1. Check if an employee or user exists with this email
+  const [emp] = await db
+    .select({ id: employees.id, status: employees.status })
+    .from(employees)
+    .where(eq(employees.email, normalizedEmail))
+    .limit(1);
+
+  const [userRow] = await db
+    .select({ id: user.id, role: user.role })
+    .from(user)
+    .where(eq(user.email, normalizedEmail))
+    .limit(1);
+
+  // If user does not exist in our database at all, return early (silent to prevent user enumeration)
+  if (!emp && !userRow) {
+    return;
+  }
+
+  // If employee record exists, only allow active accounts (reject deactivated or pending)
+  if (emp) {
+    if (emp.status !== 'active') {
+      return;
+    }
+  } else if (userRow && userRow.role !== SUPER_ADMIN_USER_ROLE) {
+    // Non-employee accounts must be super_admin to have access
+    return;
+  }
+
   await auth.api.requestPasswordResetEmailOTP({
-    body: { email },
+    body: { email: normalizedEmail },
   });
 }
 
 // ============================================================================
 // resetPasswordWithOtpService
+// Validates that the account is in the DB and active before resetting password.
 // Delegates to Better Auth's emailOTP plugin:
 //   auth.api.resetPasswordEmailOTP({ body: { email, otp, newPassword } })
 // Better Auth verifies the OTP against the verification table, hashes the
 // new password, and updates the credentials account row — all internally.
-// Throws if the OTP is invalid or expired.
+// Throws if the account is deactivated or if the OTP is invalid or expired.
+// Revokes old active sessions upon successful reset.
 // ============================================================================
 
 export async function resetPasswordWithOtpService(
@@ -234,8 +271,53 @@ export async function resetPasswordWithOtpService(
   otp: string,
   newPassword: string,
 ): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  // 1. Verify user exists in our DB and account is active
+  const [emp] = await db
+    .select({
+      id: employees.id,
+      status: employees.status,
+      userId: employees.userId,
+      requirePasswordChange: employees.requirePasswordChange,
+    })
+    .from(employees)
+    .where(eq(employees.email, normalizedEmail))
+    .limit(1);
+
+  const [userRow] = await db
+    .select({ id: user.id, role: user.role })
+    .from(user)
+    .where(eq(user.email, normalizedEmail))
+    .limit(1);
+
+  if (!emp && !userRow) {
+    throw new ApiError('User not found.', 404, true, '', {
+      code: 'USER_NOT_FOUND',
+    });
+  }
+
+  if (emp) {
+    if (emp.status === 'deactivated') {
+      throw new ApiError('This account has been deactivated.', 403, true, '', {
+        code: 'EMPLOYEE_DEACTIVATED',
+      });
+    }
+
+    if (emp.status !== 'active') {
+      throw new ApiError('This account is not active.', 403, true, '', {
+        code: 'ACCOUNT_NOT_ACTIVE',
+      });
+    }
+  } else if (userRow && userRow.role !== SUPER_ADMIN_USER_ROLE) {
+    throw new ApiError('This account is not active.', 403, true, '', {
+      code: 'ACCOUNT_NOT_ACTIVE',
+    });
+  }
+
+  // 2. Delegate OTP verification and password update to Better Auth
   const response = await auth.api.resetPasswordEmailOTP({
-    body: { email, otp, password: newPassword },
+    body: { email: normalizedEmail, otp, password: newPassword },
     asResponse: true,
   });
 
@@ -248,5 +330,19 @@ export async function resetPasswordWithOtpService(
       '',
       { code: error.code || 'INVALID_OTP' },
     );
+  }
+
+  // 3. Clear requirePasswordChange if it was set
+  if (emp && emp.requirePasswordChange) {
+    await db
+      .update(employees)
+      .set({ requirePasswordChange: false })
+      .where(eq(employees.id, emp.id));
+  }
+
+  // 4. Invalidate any existing sessions so old sessions cannot be reused
+  const targetUserId = userRow?.id || emp?.userId;
+  if (targetUserId) {
+    await db.delete(session).where(eq(session.userId, targetUserId));
   }
 }

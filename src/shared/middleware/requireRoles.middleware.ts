@@ -2,7 +2,7 @@ import type { Response, NextFunction } from 'express';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { employees } from '../../db/index.ts';
-import type { Role } from '../../db/employee.schema.ts';
+import type { Role } from '../../db/schema/employees.schema.ts';
 import type { AuthedRequest } from '../../config/middleware.ts';
 import type { AuthedEmployee } from '../../types/express.ts';
 
@@ -20,17 +20,6 @@ export const requireRoles = (allowedRoles: Role[]) => {
     }
 
     if (req.isSuperAdmin) {
-      req.employee = {
-        id: req.employee?.id ?? req.session.employeeId,
-        userId: req.employee?.userId ?? undefined,
-        name: 'Super Admin',
-        locationId: 'global',
-        role: 'super_admin',
-        email: null,
-        languagePref: 'en',
-        status: 'active',
-      };
-
       if (!allowedRoles.includes('super_admin')) {
         res.status(403).json({
           error: {
@@ -54,6 +43,8 @@ export const requireRoles = (allowedRoles: Role[]) => {
         email: employees.email,
         languagePref: employees.languagePref,
         status: employees.status,
+        stationIds: employees.stationIds,
+        jobIds: employees.jobIds,
       })
       .from(employees)
       .where(eq(employees.id, req.session.employeeId))
@@ -88,13 +79,15 @@ export const requireRoles = (allowedRoles: Role[]) => {
 
     const safe: AuthedEmployee = {
       id: row.id,
-      userId: row.userId ?? undefined,
+      userId: row.userId ?? '',
       name: row.name,
       locationId: row.locationId,
       role: row.role,
       email: row.email,
       languagePref: row.languagePref,
       status: row.status,
+      stationIds: row.stationIds || [],
+      jobIds: row.jobIds || [],
     };
     req.employee = safe;
     next();

@@ -262,16 +262,12 @@ async function seedRecipes() {
       },
       {
         id: genId(),
-        kind: 'recipe',
-        steps: r.stepsEn.map((step) => ({
-          id: genId(),
-          body: { en: step, es: `(ES) ${step}` },
-        })),
-      },
-      {
-        id: genId(),
         kind: 'method',
         steps: [
+          ...r.stepsEn.map((step) => ({
+            id: genId(),
+            body: { en: step, es: `(ES) ${step}` },
+          })),
           {
             id: genId(),
             body: {

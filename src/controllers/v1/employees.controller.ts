@@ -37,8 +37,8 @@ import catchAsync from '../../shared/utils/catchAsync.ts';
 // ---------- POST /api/admin/employees --------------------------------------
 export const createEmployee = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const admin = req.employee;
-    if (!admin) {
+    const adminId = req.userId || req.employee?.id;
+    if (!adminId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -50,7 +50,7 @@ export const createEmployee = catchAsync(
     }
     const input = parsed.data;
 
-    const { employee: row } = await createEmployeeTransaction(input, admin.id);
+    const { employee: row } = await createEmployeeTransaction(input, adminId);
 
     // Send magic link invite email — Better Auth handles token generation.
     const inviteUrl = await sendInviteMagicLink({
@@ -73,8 +73,7 @@ export const createEmployee = catchAsync(
 // ---------- POST /api/admin/employees/:id/invites --------------------------
 export const resendInvite = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const admin = req.employee;
-    if (!admin) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -359,8 +358,8 @@ export const getEmployee = catchAsync(
 // ---------- PUT /api/admin/employees/:id ---------------------------------
 export const updateEmployee = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const admin = req.employee;
-    if (!admin) {
+    const adminId = req.userId || req.employee?.id;
+    if (!adminId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -391,7 +390,7 @@ export const updateEmployee = catchAsync(
     const { employee: updated } = await updateEmployeeTransaction(
       param.data.id,
       parsed.data,
-      admin.id,
+      adminId,
     );
 
     let inviteUrl: string | undefined = undefined;
