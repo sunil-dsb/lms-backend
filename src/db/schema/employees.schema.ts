@@ -16,8 +16,15 @@ import { user } from './auth.schema.ts';
 import { locations } from './locations.schema.ts';
 
 // ============================================================================
-// Role enum — defined here, shared across employees and jobs
+// Role enums — Employee operational roles vs System roles
+// Only manager and employee can be part of the Employee table
 // ============================================================================
+export const EMPLOYEE_ROLES = ['manager', 'employee'] as const;
+export type EmployeeRole = (typeof EMPLOYEE_ROLES)[number];
+
+export const SYSTEM_ROLES = ['super_admin'] as const;
+export type SystemRole = (typeof SYSTEM_ROLES)[number];
+
 export const ROLES = ['super_admin', 'manager', 'employee'] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -48,8 +55,8 @@ export const employees = pgTable(
     locationId: uuid('location_id')
       .notNull()
       .references(() => locations.id, { onDelete: 'restrict' }),
-    // Role is now a plain text enum — no FK to a roles table needed.
-    role: text('role').$type<Role>().notNull().default('employee'),
+    // Only manager or employee can be stored in employees table
+    role: text('role').$type<EmployeeRole>().notNull().default('employee'),
     email: text('email').notNull(),
     jobIds: uuid('job_ids')
       .array()

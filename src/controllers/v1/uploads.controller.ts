@@ -10,7 +10,7 @@ import config from '../../config/index.ts';
 // POST /api/admin/uploads/direct
 export const directUpload = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee) {
+    if (!req.userId) {
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });

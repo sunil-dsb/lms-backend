@@ -62,7 +62,7 @@ export const getJobStations = catchAsync(
 
 export const createJob = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee)
+    if (!req.userId)
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -77,7 +77,7 @@ export const createJob = catchAsync(
 
 export const updateJob = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee)
+    if (!req.userId)
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -97,7 +97,7 @@ export const updateJob = catchAsync(
 
 export const deleteJob = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee)
+    if (!req.userId)
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });

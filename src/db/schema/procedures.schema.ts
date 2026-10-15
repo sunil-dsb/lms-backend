@@ -8,7 +8,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { subcategories } from './subcategories.schema.ts';
-import { quiz } from './quizzes.schema.ts';
+import { quiz } from './quiz.schema.ts';
 
 import { user } from './auth.schema.ts';
 
@@ -198,19 +198,6 @@ const methodBlockSchema = z.object({
     .min(1, 'A method block needs at least one step.'),
 });
 
-const recipeBlockSchema = z.object({
-  id: z.string().min(1),
-  kind: z.literal('recipe'),
-  audience: z.string().optional(),
-  allergen: allergenSchema.optional(),
-  yieldItems: z.array(yieldItemSchema).optional(),
-  factors: z.array(z.number().int().positive()).optional(),
-  ingredients: z.array(ingredientSchema).optional(),
-  steps: z
-    .array(methodStepSchema)
-    .min(1, 'A recipe block needs at least one step.'),
-});
-
 const imageBlockSchema = z.object({
   id: z.string().min(1),
   kind: z.literal('image'),
@@ -280,7 +267,6 @@ export const blockSchema = z.discriminatedUnion('kind', [
   textBlockSchema,
   headingBlockSchema,
   methodBlockSchema,
-  recipeBlockSchema,
   imageBlockSchema,
   videoBlockSchema,
   warningBlockSchema,

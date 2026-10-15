@@ -16,7 +16,7 @@ import {
   type PaginatedResult,
 } from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
-import { procedures, type ProcedureStatus } from '../../db/index.ts';
+import { procedures, quiz, type ProcedureStatus } from '../../db/index.ts';
 
 import { logger } from '../../config/logger.ts';
 import {
@@ -191,6 +191,19 @@ export async function createProcedure(
   assertRecipeIngredientsAlign(bodyEn.blocks, 'en');
   assertRecipeIngredientsAlign(bodyEs.blocks, 'es');
 
+  if (input.status === 'published') {
+    assertCanPublish({
+      titleEn: input.titleEn,
+      titleEs: input.titleEs,
+      purposeEn: input.purposeEn,
+      purposeEs: input.purposeEs,
+      subcategoryId: input.subcategoryId,
+      stationIds: input.stationIds,
+      blocksEn: bodyEn,
+      blocksEs: bodyEs,
+    });
+  }
+
   // Method-block cross-field rule: every step marked critical must declare
   // a criticalLimit. Applies to method blocks AND the steps inside recipe
   // blocks (recipes have methods too).
@@ -212,14 +225,24 @@ export async function createProcedure(
   // we surface a clean 400 / 404 here.
   if (input.subcategoryId != null) {
     const [subcat] = await db
-      .select({ id: subcategories.id })
+      .select({ id: subcategories.id, categoryStatus: categories.status })
       .from(subcategories)
+      .innerJoin(categories, eq(categories.id, subcategories.categoryId))
       .where(eq(subcategories.id, input.subcategoryId))
       .limit(1);
     if (!subcat) {
       throw Object.assign(new ApiError('Subcategory not found', 404), {
         errorCode: 'SUBCATEGORY_NOT_FOUND',
       });
+    }
+    if (subcat.categoryStatus === 'archived') {
+      throw Object.assign(
+        new ApiError(
+          'Cannot assign procedure to a subcategory of an archived category',
+          400,
+        ),
+        { errorCode: 'CATEGORY_ARCHIVED' },
+      );
     }
   }
 
@@ -312,7 +335,7 @@ export async function updateProcedure(
   input: UpdateProcedureInput,
 ): Promise<PublicProcedure> {
   const [existing] = await db
-    .select({ id: procedures.id })
+    .select()
     .from(procedures)
     .where(eq(procedures.id, id))
     .limit(1);
@@ -335,16 +358,44 @@ export async function updateProcedure(
     assertRecipeIngredientsAlign(bodyEs.blocks, 'es');
   }
 
+  const targetStatus = input.status ?? existing.status;
+  if (targetStatus === 'published') {
+    assertCanPublish({
+      titleEn: input.titleEn ?? existing.titleEn,
+      titleEs: input.titleEs ?? existing.titleEs,
+      purposeEn: input.purposeEn ?? existing.purposeEn,
+      purposeEs: input.purposeEs ?? existing.purposeEs,
+      subcategoryId:
+        input.subcategoryId !== undefined
+          ? input.subcategoryId
+          : existing.subcategoryId,
+      stationIds:
+        input.stationIds !== undefined ? input.stationIds : existing.stationIds,
+      blocksEn: bodyEn ?? existing.blocksEn,
+      blocksEs: bodyEs ?? existing.blocksEs,
+    });
+  }
+
   if (input.subcategoryId !== undefined && input.subcategoryId !== null) {
     const [subcat] = await db
-      .select({ id: subcategories.id })
+      .select({ id: subcategories.id, categoryStatus: categories.status })
       .from(subcategories)
+      .innerJoin(categories, eq(categories.id, subcategories.categoryId))
       .where(eq(subcategories.id, input.subcategoryId))
       .limit(1);
     if (!subcat) {
       throw Object.assign(new ApiError('Subcategory not found', 404), {
         errorCode: 'SUBCATEGORY_NOT_FOUND',
       });
+    }
+    if (subcat.categoryStatus === 'archived') {
+      throw Object.assign(
+        new ApiError(
+          'Cannot assign procedure to a subcategory of an archived category',
+          400,
+        ),
+        { errorCode: 'CATEGORY_ARCHIVED' },
+      );
     }
   }
 
@@ -784,6 +835,17 @@ export async function publishProcedure(id: string): Promise<PublicProcedure> {
     );
   }
 
+  assertCanPublish({
+    titleEn: existing.proc.titleEn,
+    titleEs: existing.proc.titleEs,
+    purposeEn: existing.proc.purposeEn,
+    purposeEs: existing.proc.purposeEs,
+    subcategoryId: existing.proc.subcategoryId,
+    stationIds: existing.proc.stationIds,
+    blocksEn: existing.proc.blocksEn,
+    blocksEs: existing.proc.blocksEs,
+  });
+
   const now = new Date();
   await db
     .update(procedures)
@@ -799,17 +861,34 @@ export async function publishProcedure(id: string): Promise<PublicProcedure> {
 }
 
 /** Delete a procedure by ID.
+ *  Also cascade deletes any quiz linked to this procedure.
  *  Throws 404 when the id doesn't exist. */
 export async function deleteProcedure(id: string): Promise<void> {
-  const [deleted] = await db
-    .delete(procedures)
+  const [existing] = await db
+    .select({ id: procedures.id, quizId: procedures.quizId })
+    .from(procedures)
     .where(eq(procedures.id, id))
-    .returning({ id: procedures.id });
+    .limit(1);
 
-  if (!deleted) {
+  if (!existing) {
     throw Object.assign(new ApiError('Procedure not found', 404), {
       errorCode: 'NOT_FOUND',
     });
+  }
+
+  await db.delete(procedures).where(eq(procedures.id, id));
+
+  // If this procedure had a linked quiz, delete it as well (if no other procedure shares it)
+  if (existing.quizId) {
+    const [otherProc] = await db
+      .select({ id: procedures.id })
+      .from(procedures)
+      .where(eq(procedures.quizId, existing.quizId))
+      .limit(1);
+
+    if (!otherProc) {
+      await db.delete(quiz).where(eq(quiz.id, existing.quizId));
+    }
   }
 }
 
@@ -818,7 +897,7 @@ function assertRecipeIngredientsAlign(
   lang: 'en' | 'es',
 ): void {
   for (const block of blocks) {
-    if (block.kind !== 'recipe' && block.kind !== 'ingredients') continue;
+    if (block.kind !== 'ingredients') continue;
     const recipe = block;
     const hasIngredients = (recipe.ingredients?.length ?? 0) > 0;
     const hasFactors = (recipe.factors?.length ?? 0) > 0;
@@ -844,5 +923,99 @@ function assertRecipeIngredientsAlign(
         );
       }
     }
+  }
+}
+
+function extractBlocks(raw: unknown): unknown[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (
+    typeof raw === 'object' &&
+    'blocks' in raw &&
+    Array.isArray((raw as { blocks: unknown[] }).blocks)
+  ) {
+    return (raw as { blocks: unknown[] }).blocks;
+  }
+  return [];
+}
+
+export function assertCanPublish(procedure: {
+  titleEn?: string | null | undefined;
+  titleEs?: string | null | undefined;
+  purposeEn?: string | null | undefined;
+  purposeEs?: string | null | undefined;
+  subcategoryId?: string | null | undefined;
+  stationIds?: string[] | null | undefined;
+  blocksEn?: unknown;
+  blocksEs?: unknown;
+}): void {
+  if (!procedure.titleEn || procedure.titleEn.trim().length === 0) {
+    throw Object.assign(
+      new ApiError('English title is required to publish a procedure.', 400),
+      { errorCode: 'TITLE_EN_REQUIRED' },
+    );
+  }
+
+  if (!procedure.titleEs || procedure.titleEs.trim().length === 0) {
+    throw Object.assign(
+      new ApiError('Spanish title is required to publish a procedure.', 400),
+      { errorCode: 'TITLE_ES_REQUIRED' },
+    );
+  }
+
+  if (!procedure.purposeEn || procedure.purposeEn.trim().length === 0) {
+    throw Object.assign(
+      new ApiError('English purpose is required to publish a procedure.', 400),
+      { errorCode: 'PURPOSE_EN_REQUIRED' },
+    );
+  }
+
+  if (!procedure.purposeEs || procedure.purposeEs.trim().length === 0) {
+    throw Object.assign(
+      new ApiError('Spanish purpose is required to publish a procedure.', 400),
+      { errorCode: 'PURPOSE_ES_REQUIRED' },
+    );
+  }
+
+  if (!procedure.subcategoryId || procedure.subcategoryId.trim().length === 0) {
+    throw Object.assign(
+      new ApiError(
+        'Category/subcategory is required to publish a procedure.',
+        400,
+      ),
+      { errorCode: 'SUBCATEGORY_REQUIRED' },
+    );
+  }
+
+  if (!procedure.stationIds || procedure.stationIds.length === 0) {
+    throw Object.assign(
+      new ApiError(
+        'At least one station is required to publish a procedure.',
+        400,
+      ),
+      { errorCode: 'STATIONS_REQUIRED' },
+    );
+  }
+
+  const enBlocks = extractBlocks(procedure.blocksEn);
+  if (enBlocks.length === 0) {
+    throw Object.assign(
+      new ApiError(
+        'English procedure body must contain at least one component/block to publish.',
+        400,
+      ),
+      { errorCode: 'BODY_EN_BLOCKS_REQUIRED' },
+    );
+  }
+
+  const esBlocks = extractBlocks(procedure.blocksEs);
+  if (esBlocks.length === 0) {
+    throw Object.assign(
+      new ApiError(
+        'Spanish procedure body must contain at least one component/block to publish.',
+        400,
+      ),
+      { errorCode: 'BODY_ES_BLOCKS_REQUIRED' },
+    );
   }
 }

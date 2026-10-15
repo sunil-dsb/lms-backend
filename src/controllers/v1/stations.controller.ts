@@ -25,7 +25,7 @@ export const listStations = catchAsync(
 
 export const createStation = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee)
+    if (!req.userId)
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -40,7 +40,7 @@ export const createStation = catchAsync(
 
 export const updateStation = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee)
+    if (!req.userId)
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });
@@ -63,7 +63,7 @@ export const updateStation = catchAsync(
 
 export const deleteStation = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee)
+    if (!req.userId)
       throw new ApiError('Not authenticated', 401, true, '', {
         code: 'UNAUTHENTICATED',
       });

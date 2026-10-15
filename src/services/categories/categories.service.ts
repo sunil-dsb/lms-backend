@@ -225,6 +225,13 @@ export async function createSubcategory(
     });
   }
 
+  if (category.status === 'archived') {
+    throw Object.assign(
+      new ApiError('Cannot create a subcategory in an archived category', 400),
+      { errorCode: 'CATEGORY_ARCHIVED' },
+    );
+  }
+
   const id = crypto.randomUUID();
   await db.insert(subcategories).values({
     id,

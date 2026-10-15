@@ -17,6 +17,8 @@ import {
   createSubcategoryAdmin,
   updateSubcategoryAdmin,
   deleteSubcategoryAdmin,
+  archiveSubcategoryAdmin,
+  unarchiveSubcategoryAdmin,
 } from '../../controllers/v1/subcategories.controller.ts';
 
 import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
@@ -109,6 +111,26 @@ categoriesRoute.patch(
     message: 'Too many subcategory updates, please try again later.',
   }),
   updateSubcategoryAdmin,
+);
+categoriesRoute.post(
+  '/:categoryId/subcategories/:id/archive',
+  requireAuth,
+  requireRoles(['super_admin']),
+  createLimiter({
+    limit: 20,
+    message: 'Too many subcategory archive requests, please try again later.',
+  }),
+  archiveSubcategoryAdmin,
+);
+categoriesRoute.post(
+  '/:categoryId/subcategories/:id/unarchive',
+  requireAuth,
+  requireRoles(['super_admin']),
+  createLimiter({
+    limit: 20,
+    message: 'Too many subcategory unarchive requests, please try again later.',
+  }),
+  unarchiveSubcategoryAdmin,
 );
 categoriesRoute.delete(
   '/:categoryId/subcategories/:id',

@@ -20,18 +20,6 @@ export const requireRoles = (allowedRoles: Role[]) => {
     }
 
     if (req.isSuperAdmin) {
-      req.employee = {
-        id: req.employee?.id ?? req.session.employeeId,
-        userId: req.employee?.userId ?? undefined,
-        name: 'Super Admin',
-        locationId: 'global',
-        role: 'super_admin',
-        email: null,
-        languagePref: 'en',
-        status: 'active',
-        stationIds: req.employee?.stationIds ?? [],
-      };
-
       if (!allowedRoles.includes('super_admin')) {
         res.status(403).json({
           error: {
@@ -90,15 +78,16 @@ export const requireRoles = (allowedRoles: Role[]) => {
 
     const safe: AuthedEmployee = {
       id: row.id,
-      userId: row.userId ?? undefined,
+      userId: row.userId ?? '',
       name: row.name,
       locationId: row.locationId,
       role: row.role,
       email: row.email,
       languagePref: row.languagePref,
       status: row.status,
+      stationIds: row.stationIds || [],
     };
-    req.employee = { ...safe, stationIds: row.stationIds || [] };
+    req.employee = safe;
     next();
   };
 };

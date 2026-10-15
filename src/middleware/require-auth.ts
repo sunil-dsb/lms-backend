@@ -38,13 +38,21 @@ export async function requireAuth(
   // One query for both the user's role and their employee row (if any).
   const [row] = await db
     .select({
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
       userRole: user.role,
       employee: {
         id: employees.id,
+        userId: employees.userId,
+        name: employees.name,
+        email: employees.email,
+        languagePref: employees.languagePref,
         status: employees.status,
         locationId: employees.locationId,
         role: employees.role,
         stationIds: employees.stationIds,
+        jobIds: employees.jobIds,
       },
     })
     .from(user)
@@ -58,26 +66,30 @@ export async function requireAuth(
     });
     return;
   }
+
+  req.user = {
+    id: row.userId,
+    name: row.userName,
+    email: row.userEmail,
+    role: row.userRole === SUPER_ADMIN_USER_ROLE ? 'super_admin' : 'user',
+  };
+
   const { employee } = row;
 
-  // Super Admin: does not require an employee record.
+  // Super Admin: does not require an employee record and is NOT an employee.
   if (row.userRole === SUPER_ADMIN_USER_ROLE) {
     req.session = {
       id: sessionId,
       employeeId: employee?.id ?? '',
     };
     req.isSuperAdmin = true;
-    req.employee = {
-      id: employee?.id ?? '',
-      userId: userId,
-      locationId: employee?.locationId ?? 'global',
-      role: 'super_admin',
-      stationIds: employee?.stationIds ?? [],
-    };
+    req.employee = undefined;
     req.deviceMode =
       req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';
     return next();
   }
+
+  req.isSuperAdmin = false;
 
   // Non-super-admin users must have an associated employee record.
   if (!employee) {
@@ -117,9 +129,14 @@ export async function requireAuth(
   req.employee = {
     id: employee.id,
     userId: userId,
+    name: employee.name,
+    email: employee.email,
+    languagePref: employee.languagePref,
+    status: employee.status,
     locationId: employee.locationId,
     role: employee.role,
     stationIds: employee.stationIds || [],
+    jobIds: employee.jobIds || [],
   };
   req.deviceMode =
     req.headers['x-device-mode'] === 'shared' ? 'shared' : 'personal';

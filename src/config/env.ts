@@ -34,8 +34,9 @@ const envVarsSchema = z.object({
   ),
 
   // AI extraction
-  GOOGLE_AI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default('gemini-3.6-flash'),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().default('openai/gpt-4o-mini'),
+  OPENAI_BASE_URL: z.string().optional(),
 
   // Logging
   LOG_LEVEL: z.string().default('info'),
@@ -71,14 +72,14 @@ const config = {
         envVars.FRONTEND_BASE_URL,
         'http://localhost:3000',
         'http://127.0.0.1:3000',
-        'https://alimentaria-lms.vercel.app',
+        'https://lms.dsbitteam.in',
       ].filter((o): o is string => Boolean(o)),
     ),
   ),
   frontendBaseUrl: (
     envVars.FRONTEND_BASE_URL ||
     (envVars.NODE_ENV === 'production'
-      ? 'https://alimentaria-lms.vercel.app'
+      ? 'https://lms.dsbitteam.in'
       : 'http://localhost:3000')
   ).replace(/\/+$/, ''),
   resendApiKey: envVars.RESEND_API_KEY,
@@ -94,8 +95,9 @@ const config = {
   r2PublicBaseUrl: envVars.R2_PUBLIC_BASE_URL,
   r2UploadTtlSeconds: envVars.R2_UPLOAD_TTL_SECONDS,
   r2UploadMaxBytes: envVars.R2_UPLOAD_MAX_BYTES,
-  googleAiApiKey: envVars.GOOGLE_AI_API_KEY,
-  geminiModel: envVars.GEMINI_MODEL,
+  openaiApiKey: envVars.OPENAI_API_KEY,
+  openaiModel: envVars.OPENAI_MODEL,
+  openaiBaseUrl: envVars.OPENAI_BASE_URL,
   logLevel: envVars.LOG_LEVEL,
 };
 

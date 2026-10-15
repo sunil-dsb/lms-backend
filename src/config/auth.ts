@@ -64,6 +64,13 @@ export const auth = betterAuth({
           return;
         }
 
+        if (emp.status === 'deactivated') {
+          console.warn(
+            `[MAGIC LINK] Suppressing invite magic link for deactivated employee: ${email}`,
+          );
+          return;
+        }
+
         const parsed = new URL(url);
         const token = parsed.searchParams.get('token');
         const baseUrl = config.frontendBaseUrl.replace(/\/+$/, '');
@@ -103,6 +110,20 @@ export const auth = betterAuth({
       sendVerificationOTP: async ({ email, otp, type }) => {
         // We only use this plugin for password-reset OTPs.
         if (type !== 'forget-password') return;
+
+        // Defense-in-depth: check if employee is deactivated
+        const [emp] = await db
+          .select({ status: employees.status })
+          .from(employees)
+          .where(eq(employees.email, email))
+          .limit(1);
+
+        if (emp && emp.status === 'deactivated') {
+          console.warn(
+            `[EMAIL OTP] Suppressing password reset OTP for deactivated employee: ${email}`,
+          );
+          return;
+        }
 
         try {
           const html = getAuthEmailAndResetPasswordTemplate(
@@ -180,9 +201,9 @@ export const auth = betterAuth({
       'http://localhost:3000',
       'http://127.0.0.1:3000',
       'https://alimentaria-lms.vercel.app',
+      ...(config.cors || []),
     ]),
   ),
-
   // 6. Signing secret. MUST be set in .env for any non-dev environment.
   secret:
     process.env.BETTER_AUTH_SECRET ??
