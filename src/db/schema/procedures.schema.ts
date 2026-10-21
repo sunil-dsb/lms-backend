@@ -183,6 +183,62 @@ const textBlockSchema = z.object({
   body: localisedString,
 });
 
+type RichTextJsonNode = {
+  type: string;
+  attrs?: Record<string, unknown> | undefined;
+  text?: string | undefined;
+  marks?:
+    { type: string; attrs?: Record<string, unknown> | undefined }[] | undefined;
+  content?: RichTextJsonNode[] | undefined;
+};
+
+const safeRichTextHref = z.string().refine((href) => {
+  try {
+    return ['http:', 'https:', 'mailto:', 'tel:'].includes(
+      new URL(href, 'https://lms.invalid').protocol,
+    );
+  } catch {
+    return false;
+  }
+});
+
+const richTextNodeSchema: z.ZodType<RichTextJsonNode> = z.lazy(() =>
+  z.object({
+    type: z.enum([
+      'doc',
+      'paragraph',
+      'heading',
+      'text',
+      'hardBreak',
+      'bulletList',
+      'orderedList',
+      'listItem',
+      'blockquote',
+      'horizontalRule',
+    ]),
+    attrs: z.record(z.string(), z.unknown()).optional(),
+    text: z.string().optional(),
+    marks: z
+      .array(
+        z.union([
+          z.object({ type: z.enum(['bold', 'italic', 'strike', 'underline']) }),
+          z.object({
+            type: z.literal('link'),
+            attrs: z.object({ href: safeRichTextHref }).passthrough(),
+          }),
+        ]),
+      )
+      .optional(),
+    content: z.array(richTextNodeSchema).optional(),
+  }),
+);
+
+const richTextBlockSchema = z.object({
+  id: z.string().min(1),
+  kind: z.literal('rich_text'),
+  body: z.object({ en: richTextNodeSchema, es: richTextNodeSchema }),
+});
+
 const headingBlockSchema = z.object({
   id: z.string().min(1),
   kind: z.literal('heading'),
@@ -265,6 +321,7 @@ const checklistBlockSchema = z.object({
 
 export const blockSchema = z.discriminatedUnion('kind', [
   textBlockSchema,
+  richTextBlockSchema,
   headingBlockSchema,
   methodBlockSchema,
   imageBlockSchema,
