@@ -6,6 +6,7 @@ import { getPaginationParams } from '../../shared/utils/pagination.ts';
 import {
   createCourseInputSchema,
   updateCourseInputSchema,
+  assignCourseInputSchema,
   type TrainingCourseStatus,
 } from '../../db/index.ts';
 import * as coursesService from '../../services/courses/courses.service.ts';
@@ -33,9 +34,24 @@ export const listCourses = catchAsync(
       status = 'archived';
     }
 
+    const assignmentParam =
+      typeof req.query.assignment === 'string'
+        ? req.query.assignment.toLowerCase().trim()
+        : undefined;
+
+    let assignment: 'all' | 'assigned' | 'unassigned' | undefined = undefined;
+    if (assignmentParam === 'assigned') {
+      assignment = 'assigned';
+    } else if (assignmentParam === 'unassigned') {
+      assignment = 'unassigned';
+    } else if (assignmentParam === 'all') {
+      assignment = 'all';
+    }
+
     const result = await coursesService.listCourses({
       search,
       status,
+      assignment,
       page,
       limit,
     });
@@ -47,6 +63,7 @@ export const listCourses = catchAsync(
       );
   },
 );
+
 
 // GET /api/v1/courses/:id
 export const getCourse = catchAsync(
@@ -172,3 +189,41 @@ export const deleteCourse = catchAsync(
       .json(ApiResponse.success('Training course deleted successfully', null));
   },
 );
+
+// POST /api/v1/courses/:id/assign
+export const assignCourse = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const idValidation = uuidParamSchema.safeParse(req.params.id);
+    if (!idValidation.success) {
+      throw new ApiError('Invalid course id format', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    // Support both employeeIds or userIds in body for flexibility
+    const body = {
+      employeeIds:
+        req.body?.employeeIds ||
+        req.body?.userIds ||
+        (Array.isArray(req.body) ? req.body : []),
+      mode: req.body?.mode || 'add',
+    };
+
+    const parsed = assignCourseInputSchema.safeParse(body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const result = await coursesService.assignCourse(
+      idValidation.data,
+      parsed.data,
+    );
+
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Training course assigned successfully', result),
+      );
+  },
+);
+

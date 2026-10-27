@@ -1,5 +1,17 @@
 import ApiError from '../../shared/utils/ApiError.ts';
-import { SQL, and, desc, asc, eq, ilike, or, count } from 'drizzle-orm';
+import {
+  SQL,
+  and,
+  desc,
+  asc,
+  eq,
+  ilike,
+  or,
+  count,
+  isNull,
+  isNotNull,
+  sql,
+} from 'drizzle-orm';
 import {
   formatPaginatedResult,
   type PaginatedResult,
@@ -8,6 +20,8 @@ import { db } from '../../db/client.ts';
 import {
   trainingCourses,
   trainingChapters,
+  quiz,
+  procedures,
   type TrainingCourse,
   type TrainingChapter,
   type CreateCourseInput,
@@ -17,11 +31,12 @@ import {
 import { logger } from '../../config/logger.ts';
 
 export interface CourseWithChapters extends TrainingCourse {
-  chapters: TrainingChapter[];
+  chapters: (TrainingChapter & { quiz?: any })[];
 }
 
 export interface CourseListItem extends TrainingCourse {
   chapterCount: number;
+  assignedCount: number;
 }
 
 /**
@@ -39,6 +54,7 @@ export async function createCourse(
         titleEs: input.titleEs,
         purposeEn: input.purposeEn,
         purposeEs: input.purposeEs,
+        assignUsers: input.assignUsers || [],
         status: 'published',
         createdBy: actor.userId || null,
       })
@@ -97,11 +113,27 @@ export async function getCourseById(id: string): Promise<CourseWithChapters> {
     });
   }
 
-  const chapters = await db
-    .select()
+  const chapterRows = await db
+    .select({
+      chapter: trainingChapters,
+      chapterQuiz: quiz,
+    })
     .from(trainingChapters)
+    .leftJoin(quiz, eq(trainingChapters.quizId, quiz.id))
     .where(eq(trainingChapters.courseId, id))
     .orderBy(asc(trainingChapters.number));
+
+  const chapters = chapterRows.map((r) => ({
+    ...r.chapter,
+    quiz: r.chapterQuiz
+      ? {
+          id: r.chapterQuiz.id,
+          attached: true,
+          questions: r.chapterQuiz.questions,
+          minCorrectAnswers: r.chapter.minCorrectAnswers ?? null,
+        }
+      : null,
+  }));
 
   return {
     ...course,
@@ -110,21 +142,38 @@ export async function getCourseById(id: string): Promise<CourseWithChapters> {
 }
 
 /**
- * Lists courses with optional text search, status filtering, and pagination.
+ * Lists courses with optional text search, status filtering, assignment filtering, and pagination.
  */
 export async function listCourses(params: {
   search?: string | undefined;
   status?: TrainingCourseStatus | undefined;
+  assignment?: 'all' | 'assigned' | 'unassigned' | undefined;
   page?: number | undefined;
   limit?: number | undefined;
 }): Promise<PaginatedResult<CourseListItem>> {
-  const { search, status, page = 1, limit = 20 } = params;
+  const { search, status, assignment, page = 1, limit = 20 } = params;
   const offset = (page - 1) * limit;
 
   const conditions: SQL[] = [];
 
   if (status) {
     conditions.push(eq(trainingCourses.status, status));
+  }
+
+  if (assignment === 'assigned') {
+    conditions.push(
+      and(
+        isNotNull(trainingCourses.assignUsers),
+        sql`cardinality(${trainingCourses.assignUsers}) > 0`,
+      )!,
+    );
+  } else if (assignment === 'unassigned') {
+    conditions.push(
+      or(
+        isNull(trainingCourses.assignUsers),
+        sql`cardinality(${trainingCourses.assignUsers}) = 0`,
+      )!,
+    );
   }
 
   if (search && search.trim().length > 0) {
@@ -165,10 +214,16 @@ export async function listCourses(params: {
     .limit(limit)
     .offset(offset);
 
-  const items: CourseListItem[] = rows.map((r) => ({
-    ...r.course,
-    chapterCount: Number(r.chapterCount),
-  }));
+  const items: CourseListItem[] = rows.map((r) => {
+    const users = Array.isArray(r.course.assignUsers)
+      ? r.course.assignUsers
+      : [];
+    return {
+      ...r.course,
+      chapterCount: Number(r.chapterCount),
+      assignedCount: users.length,
+    };
+  });
 
   return formatPaginatedResult(items, Number(total), page, limit);
 }
@@ -202,6 +257,8 @@ export async function updateCourse(
     if (input.titleEs !== undefined) updateValues.titleEs = input.titleEs;
     if (input.purposeEn !== undefined) updateValues.purposeEn = input.purposeEn;
     if (input.purposeEs !== undefined) updateValues.purposeEs = input.purposeEs;
+    if (input.assignUsers !== undefined) updateValues.assignUsers = input.assignUsers;
+
 
     const [updatedCourse] = await tx
       .update(trainingCourses)
@@ -318,4 +375,53 @@ export async function deleteCourse(id: string): Promise<void> {
   }
 
   logger.info(`Course (${id}) and all chapters deleted`);
+}
+
+/**
+ * Assigns or updates assigned employees on a training course.
+ */
+export async function assignCourse(
+  courseId: string,
+  input: { employeeIds: string[]; mode?: 'add' | 'replace' | undefined },
+): Promise<{ courseId: string; assignedCount: number; assignUsers: string[] }> {
+  const [existing] = await db
+    .select({
+      id: trainingCourses.id,
+      titleEn: trainingCourses.titleEn,
+      assignUsers: trainingCourses.assignUsers,
+    })
+    .from(trainingCourses)
+    .where(eq(trainingCourses.id, courseId))
+    .limit(1);
+
+  if (!existing) {
+    throw new ApiError('Training course not found', 404, true, '', {
+      code: 'COURSE_NOT_FOUND',
+    });
+  }
+
+  const current = existing.assignUsers || [];
+  const nextUsers =
+    input.mode === 'replace'
+      ? Array.from(new Set(input.employeeIds))
+      : Array.from(new Set([...current, ...input.employeeIds]));
+
+  const [updated] = await db
+    .update(trainingCourses)
+    .set({
+      assignUsers: nextUsers,
+      updatedAt: new Date(),
+    })
+    .where(eq(trainingCourses.id, courseId))
+    .returning();
+
+  logger.info(
+    `Course "${existing.titleEn}" (${courseId}) assigned to ${nextUsers.length} users`,
+  );
+
+  return {
+    courseId,
+    assignedCount: nextUsers.length,
+    assignUsers: nextUsers,
+  };
 }

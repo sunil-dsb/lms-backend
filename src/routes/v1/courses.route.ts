@@ -7,6 +7,7 @@ import {
   archiveCourse,
   unarchiveCourse,
   deleteCourse,
+  assignCourse,
 } from '../../controllers/v1/courses.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
@@ -28,6 +29,13 @@ coursesRoute.post(
     message: 'Too many course creations, please try again later.',
   }),
   createCourse,
+);
+
+coursesRoute.post(
+  '/:id/assign',
+  requireAuth,
+  requireRoles(['super_admin']),
+  assignCourse,
 );
 
 coursesRoute.put(
@@ -74,3 +82,4 @@ coursesRoute.delete(
 );
 
 export default coursesRoute;
+
