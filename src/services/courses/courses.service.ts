@@ -21,7 +21,7 @@ import {
   trainingCourses,
   trainingChapters,
   quiz,
-  procedures,
+  type Quiz,
   type TrainingCourse,
   type TrainingChapter,
   type CreateCourseInput,
@@ -30,13 +30,25 @@ import {
 } from '../../db/index.ts';
 import { logger } from '../../config/logger.ts';
 
+export interface ChapterQuizSummary {
+  id: string;
+  attached?: boolean;
+  questions?: unknown;
+  minCorrectAnswers?: number | null;
+  quizType?: string;
+  nameEn?: string;
+  nameEs?: string;
+}
+
 export interface CourseWithChapters extends TrainingCourse {
-  chapters: (TrainingChapter & { quiz?: any })[];
+  chapters: (TrainingChapter & { quiz?: ChapterQuizSummary | Quiz | null })[];
 }
 
 export interface CourseListItem extends TrainingCourse {
   chapterCount: number;
   assignedCount: number;
+  quizCount?: number;
+  hasQuiz?: boolean;
 }
 
 /**
@@ -86,13 +98,38 @@ export async function createCourse(
         .returning();
     }
 
+    let finalChapters: CourseWithChapters['chapters'] = insertedChapters;
+    if (insertedChapters.length > 0) {
+      const chapterRows = await tx
+        .select({
+          chapter: trainingChapters,
+          chapterQuiz: quiz,
+        })
+        .from(trainingChapters)
+        .leftJoin(quiz, eq(trainingChapters.quizId, quiz.id))
+        .where(eq(trainingChapters.courseId, insertedCourse.id))
+        .orderBy(asc(trainingChapters.number));
+
+      finalChapters = chapterRows.map((r) => ({
+        ...r.chapter,
+        quiz: r.chapterQuiz
+          ? {
+              id: r.chapterQuiz.id,
+              attached: true,
+              questions: r.chapterQuiz.questions,
+              minCorrectAnswers: r.chapter.minCorrectAnswers ?? null,
+            }
+          : null,
+      }));
+    }
+
     logger.info(
       `Course "${insertedCourse.titleEn}" (${insertedCourse.id}) created by ${actor.userId || 'system'} with ${insertedChapters.length} chapters`,
     );
 
     return {
       ...insertedCourse,
-      chapters: insertedChapters.sort((a, b) => a.number - b.number),
+      chapters: finalChapters,
     };
   });
 }
@@ -197,11 +234,12 @@ export async function listCourses(params: {
     .where(whereClause);
   const total = countResult[0]?.total ?? 0;
 
-  // Rows with chapter count
+  // Rows with chapter count & quiz count
   const rows = await db
     .select({
       course: trainingCourses,
       chapterCount: count(trainingChapters.id),
+      quizCount: count(trainingChapters.quizId),
     })
     .from(trainingCourses)
     .leftJoin(
@@ -221,6 +259,8 @@ export async function listCourses(params: {
     return {
       ...r.course,
       chapterCount: Number(r.chapterCount),
+      quizCount: Number(r.quizCount),
+      hasQuiz: Number(r.quizCount) > 0,
       assignedCount: users.length,
     };
   });
@@ -257,8 +297,8 @@ export async function updateCourse(
     if (input.titleEs !== undefined) updateValues.titleEs = input.titleEs;
     if (input.purposeEn !== undefined) updateValues.purposeEn = input.purposeEn;
     if (input.purposeEs !== undefined) updateValues.purposeEs = input.purposeEs;
-    if (input.assignUsers !== undefined) updateValues.assignUsers = input.assignUsers;
-
+    if (input.assignUsers !== undefined)
+      updateValues.assignUsers = input.assignUsers;
 
     const [updatedCourse] = await tx
       .update(trainingCourses)
@@ -296,11 +336,27 @@ export async function updateCourse(
       }
     }
 
-    const currentChapters = await tx
-      .select()
+    const currentChapterRows = await tx
+      .select({
+        chapter: trainingChapters,
+        chapterQuiz: quiz,
+      })
       .from(trainingChapters)
+      .leftJoin(quiz, eq(trainingChapters.quizId, quiz.id))
       .where(eq(trainingChapters.courseId, id))
       .orderBy(asc(trainingChapters.number));
+
+    const currentChapters = currentChapterRows.map((r) => ({
+      ...r.chapter,
+      quiz: r.chapterQuiz
+        ? {
+            id: r.chapterQuiz.id,
+            attached: true,
+            questions: r.chapterQuiz.questions,
+            minCorrectAnswers: r.chapter.minCorrectAnswers ?? null,
+          }
+        : null,
+    }));
 
     logger.info(
       `Course "${updatedCourse.titleEn}" (${id}) updated by ${actor.userId || 'system'}`,
@@ -406,18 +462,18 @@ export async function assignCourse(
       ? Array.from(new Set(input.employeeIds))
       : Array.from(new Set([...current, ...input.employeeIds]));
 
-  const [updated] = await db
-    .update(trainingCourses)
-    .set({
-      assignUsers: nextUsers,
-      updatedAt: new Date(),
-    })
-    .where(eq(trainingCourses.id, courseId))
-    .returning();
+  // const [updated] = await db
+  //   .update(trainingCourses)
+  //   .set({
+  //     assignUsers: nextUsers,
+  //     updatedAt: new Date(),
+  //   })
+  //   .where(eq(trainingCourses.id, courseId))
+  //   .returning();
 
-  logger.info(
-    `Course "${existing.titleEn}" (${courseId}) assigned to ${nextUsers.length} users`,
-  );
+  // logger.info(
+  //   `Course "${existing.titleEn}" (${courseId}) assigned to ${nextUsers.length} users`,
+  // );
 
   return {
     courseId,

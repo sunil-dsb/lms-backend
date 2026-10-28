@@ -11,6 +11,7 @@ import categoriesRoute from './categories.route.ts';
 import subcategoriesRoute from './subcategories.route.ts';
 import quizzesRoute from './quiz.route.ts';
 import coursesRoute from './courses.route.ts';
+import chaptersRoute from './chapters.route.ts';
 import { importProcedure } from '../../controllers/v1/procedures.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
@@ -64,6 +65,14 @@ const defaultRoutes = [
   {
     path: '/courses',
     route: coursesRoute,
+  },
+  {
+    path: '/chapters',
+    route: chaptersRoute,
+  },
+  {
+    path: '/courses/:courseId/chapters',
+    route: chaptersRoute,
   },
 ];
 

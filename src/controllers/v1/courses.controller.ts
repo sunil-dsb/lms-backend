@@ -64,7 +64,6 @@ export const listCourses = catchAsync(
   },
 );
 
-
 // GET /api/v1/courses/:id
 export const getCourse = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -104,7 +103,7 @@ export const createCourse = catchAsync(
   },
 );
 
-// PUT /api/v1/courses/:id or PATCH /api/v1/courses/:id
+// PATCH /api/v1/courses/:id
 export const updateCourse = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const idValidation = uuidParamSchema.safeParse(req.params.id);
@@ -226,4 +225,3 @@ export const assignCourse = catchAsync(
       );
   },
 );
-

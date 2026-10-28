@@ -62,3 +62,58 @@ export const trainingChapters = pgTable(
 
 export type TrainingChapter = typeof trainingChapters.$inferSelect;
 export type NewTrainingChapter = typeof trainingChapters.$inferInsert;
+
+// ===========================================================================
+// Zod validation schemas
+// ===========================================================================
+import { z } from 'zod';
+
+export const chapterQuizInputSchema = z.object({
+  id: z.string().uuid().optional(),
+  attached: z.boolean().default(true),
+  minCorrectAnswers: z.number().int().min(0).optional(),
+  questions: z.array(z.unknown()).default([]),
+});
+
+export const createChapterInputSchema = z.object({
+  courseId: z.string().uuid('Invalid course ID').optional(),
+  number: z.number().int().min(1).optional(),
+  titleEn: z.string().trim().min(1, 'English chapter title is required'),
+  titleEs: z.string().trim().min(1, 'Spanish chapter title is required'),
+  subtitleEn: z.string().trim().default(''),
+  subtitleEs: z.string().trim().default(''),
+  blocks: z.array(z.unknown()).default([]),
+  procedureId: z.string().uuid().nullable().optional(),
+  quizId: z.string().uuid().nullable().optional(),
+  minCorrectAnswers: z.number().int().min(0).nullable().optional(),
+  quiz: chapterQuizInputSchema.nullable().optional(),
+});
+export type CreateChapterInput = z.infer<typeof createChapterInputSchema>;
+
+export const updateChapterInputSchema = z.object({
+  courseId: z.string().uuid('Invalid course ID').optional(),
+  number: z.number().int().min(1).optional(),
+  titleEn: z.string().trim().min(1).optional(),
+  titleEs: z.string().trim().min(1).optional(),
+  subtitleEn: z.string().trim().optional(),
+  subtitleEs: z.string().trim().optional(),
+  blocks: z.array(z.unknown()).optional(),
+  procedureId: z.string().uuid().nullable().optional(),
+  quizId: z.string().uuid().nullable().optional(),
+  minCorrectAnswers: z.number().int().min(0).nullable().optional(),
+  quiz: chapterQuizInputSchema.nullable().optional(),
+});
+export type UpdateChapterInput = z.infer<typeof updateChapterInputSchema>;
+
+export const reorderChaptersInputSchema = z.object({
+  courseId: z.string().uuid('Invalid course ID').optional(),
+  orders: z
+    .array(
+      z.object({
+        id: z.string().uuid('Invalid chapter ID'),
+        number: z.number().int().min(1, 'Chapter number must be at least 1'),
+      }),
+    )
+    .min(1, 'At least one chapter order is required'),
+});
+export type ReorderChaptersInput = z.infer<typeof reorderChaptersInputSchema>;

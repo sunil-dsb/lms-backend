@@ -38,17 +38,6 @@ coursesRoute.post(
   assignCourse,
 );
 
-coursesRoute.put(
-  '/:id',
-  requireAuth,
-  requireRoles(['super_admin']),
-  createLimiter({
-    limit: 60,
-    message: 'Too many course updates, please try again later.',
-  }),
-  updateCourse,
-);
-
 coursesRoute.patch(
   '/:id',
   requireAuth,
@@ -82,4 +71,3 @@ coursesRoute.delete(
 );
 
 export default coursesRoute;
-

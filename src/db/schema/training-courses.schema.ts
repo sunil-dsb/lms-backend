@@ -92,4 +92,3 @@ export const assignCourseInputSchema = z.object({
   mode: z.enum(['add', 'replace']).default('add'),
 });
 export type AssignCourseInput = z.infer<typeof assignCourseInputSchema>;
-
