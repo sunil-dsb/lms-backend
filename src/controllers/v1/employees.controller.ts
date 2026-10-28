@@ -355,7 +355,7 @@ export const getEmployee = catchAsync(
   },
 );
 
-// ---------- PUT /api/admin/employees/:id ---------------------------------
+// ---------- PATCH /api/admin/employees/:id ---------------------------------
 export const updateEmployee = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const adminId = req.userId || req.employee?.id;

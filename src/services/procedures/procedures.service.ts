@@ -650,11 +650,19 @@ export async function getProcedureBySlug(
       }
     | undefined,
 ): Promise<PublicProcedure | null> {
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      slug,
+    );
+  const condition = isUuid
+    ? or(eq(procedures.id, slug), eq(procedures.slug, slug))
+    : eq(procedures.slug, slug);
+
   const [row] = await db
     .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
     .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
-    .where(eq(procedures.slug, slug))
+    .where(condition)
     .limit(1);
   if (!row) return null;
 

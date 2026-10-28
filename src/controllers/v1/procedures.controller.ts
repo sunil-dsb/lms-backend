@@ -47,7 +47,7 @@ export const createProcedure = catchAsync(
   },
 );
 
-// PUT /api/v1/procedures/:id  (super_admin only — auth enforced by middleware)
+// PATCH /api/v1/procedures/:id  (super_admin only — auth enforced by middleware)
 export const updateProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const id = req.params.id;
