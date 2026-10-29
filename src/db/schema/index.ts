@@ -10,3 +10,4 @@ export * from './subcategories.schema.ts';
 export * from './quiz.schema.ts';
 export * from './training-courses.schema.ts';
 export * from './training-chapters.schema.ts';
+export * from './training-course-assignments.schema.ts';

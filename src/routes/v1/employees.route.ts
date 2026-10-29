@@ -12,6 +12,7 @@ employeesRoute.use(requireAuth, requireRoles(['super_admin']));
 // ---- Employees -------------------------------------------------------------
 employeesRoute.get('/', employeesController.listEmployees);
 employeesRoute.get('/:id', employeesController.getEmployee);
+employeesRoute.get('/:id/training', employeesController.getEmployeeTraining);
 employeesRoute.post('/', employeesController.createEmployee);
 employeesRoute.patch('/:id', employeesController.updateEmployee);
 employeesRoute.post('/:id/invites', employeesController.resendInvite);

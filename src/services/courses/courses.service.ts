@@ -265,7 +265,28 @@ export async function listCourses(params: {
     };
   });
 
-  return formatPaginatedResult(items, Number(total), page, limit);
+  // Bucket counts for the Courses tab filter chips (all / assigned /
+  // unassigned / archived) — one filtered-count query so the chips can stay
+  // right while the page itself only fetches the visible bucket's rows.
+  const [countsRow] = await db
+    .select({
+      all: sql<number>`count(*) filter (where ${trainingCourses.status} <> 'archived')`,
+      assigned: sql<number>`count(*) filter (where ${trainingCourses.status} <> 'archived' and ${trainingCourses.assignUsers} is not null and cardinality(${trainingCourses.assignUsers}) > 0)`,
+      unassigned: sql<number>`count(*) filter (where ${trainingCourses.status} <> 'archived' and (${trainingCourses.assignUsers} is null or cardinality(${trainingCourses.assignUsers}) = 0))`,
+      archived: sql<number>`count(*) filter (where ${trainingCourses.status} = 'archived')`,
+    })
+    .from(trainingCourses);
+  const counts = {
+    all: Number(countsRow?.all ?? 0),
+    assigned: Number(countsRow?.assigned ?? 0),
+    unassigned: Number(countsRow?.unassigned ?? 0),
+    archived: Number(countsRow?.archived ?? 0),
+  };
+
+  return {
+    ...formatPaginatedResult(items, Number(total), page, limit),
+    counts,
+  } as PaginatedResult<CourseListItem> & { counts: typeof counts };
 }
 
 /**
@@ -431,53 +452,4 @@ export async function deleteCourse(id: string): Promise<void> {
   }
 
   logger.info(`Course (${id}) and all chapters deleted`);
-}
-
-/**
- * Assigns or updates assigned employees on a training course.
- */
-export async function assignCourse(
-  courseId: string,
-  input: { employeeIds: string[]; mode?: 'add' | 'replace' | undefined },
-): Promise<{ courseId: string; assignedCount: number; assignUsers: string[] }> {
-  const [existing] = await db
-    .select({
-      id: trainingCourses.id,
-      titleEn: trainingCourses.titleEn,
-      assignUsers: trainingCourses.assignUsers,
-    })
-    .from(trainingCourses)
-    .where(eq(trainingCourses.id, courseId))
-    .limit(1);
-
-  if (!existing) {
-    throw new ApiError('Training course not found', 404, true, '', {
-      code: 'COURSE_NOT_FOUND',
-    });
-  }
-
-  const current = existing.assignUsers || [];
-  const nextUsers =
-    input.mode === 'replace'
-      ? Array.from(new Set(input.employeeIds))
-      : Array.from(new Set([...current, ...input.employeeIds]));
-
-  // const [updated] = await db
-  //   .update(trainingCourses)
-  //   .set({
-  //     assignUsers: nextUsers,
-  //     updatedAt: new Date(),
-  //   })
-  //   .where(eq(trainingCourses.id, courseId))
-  //   .returning();
-
-  // logger.info(
-  //   `Course "${existing.titleEn}" (${courseId}) assigned to ${nextUsers.length} users`,
-  // );
-
-  return {
-    courseId,
-    assignedCount: nextUsers.length,
-    assignUsers: nextUsers,
-  };
 }
