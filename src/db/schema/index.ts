@@ -8,3 +8,6 @@ export * from './stations.schema.ts';
 export * from './jobs.schema.ts';
 export * from './subcategories.schema.ts';
 export * from './quiz.schema.ts';
+export * from './training-courses.schema.ts';
+export * from './training-chapters.schema.ts';
+export * from './training-course-assignments.schema.ts';

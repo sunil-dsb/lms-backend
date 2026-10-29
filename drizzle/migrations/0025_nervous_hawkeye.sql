@@ -1,1 +1,0 @@
-DROP INDEX IF EXISTS "employees_name_location_uniq";

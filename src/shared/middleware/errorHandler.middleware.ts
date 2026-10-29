@@ -13,6 +13,23 @@ interface ErrorLike {
   stack?: string;
 }
 
+/** True for `postgres`-driver errors (PostgresError, connection/DNS
+ *  failures). Their `message` embeds raw SQL + bound params, so they must
+ *  never be forwarded to the client — the converter maps them to a safe
+ *  generic message instead. */
+function isPostgresDriverError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = (err as { name?: unknown }).name;
+  if (name === 'PostgresError') return true;
+  const message = (err as { message?: unknown }).message;
+  return (
+    typeof message === 'string' &&
+    (message.startsWith('Failed query') ||
+      message.includes('getaddrinfo') ||
+      message.includes('ECONNREFUSED'))
+  );
+}
+
 const getErrorCode = (statusCode: number): string => {
   switch (statusCode) {
     case 400:
@@ -87,6 +104,18 @@ const errorConverter = (
       httpStatus.INTERNAL_SERVER_ERROR,
       false,
       err.stack,
+    );
+    (error as ApiError).errorCode = 'DATABASE_ERROR';
+  } else if (isPostgresDriverError(err)) {
+    // Driver errors (failed query, lost connection, DNS) carry raw SQL and
+    // params in `message` — never let those reach the client. Log the full
+    // error server-side, respond with a safe generic message instead.
+    logger.error({ err }, 'database driver error');
+    error = new ApiError(
+      'A database error occurred',
+      httpStatus.INTERNAL_SERVER_ERROR,
+      false,
+      err instanceof Error ? err.stack : undefined,
     );
     (error as ApiError).errorCode = 'DATABASE_ERROR';
   } else if (error.name === 'MulterError') {

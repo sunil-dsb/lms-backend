@@ -36,6 +36,20 @@
       "when": 1792061144334,
       "tag": "0004_safe_mimic",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793014966422,
+      "tag": "0005_amused_mentallo",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793188733694,
+      "tag": "0006_short_lady_bullseye",
+      "breakpoints": true
     }
   ]
 }

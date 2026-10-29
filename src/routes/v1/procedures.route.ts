@@ -58,7 +58,7 @@ proceduresRoute.post(
   importProcedure,
 );
 
-proceduresRoute.put(
+proceduresRoute.patch(
   '/:id',
   requireAuth,
   requireRoles(['super_admin']),

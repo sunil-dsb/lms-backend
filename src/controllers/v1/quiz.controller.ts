@@ -63,7 +63,7 @@ export const listQuizzes = catchAsync(
   },
 );
 
-// PUT /api/v1/quizzes/:id  (super_admin only)
+// PATCH /api/v1/quizzes/:id  (super_admin only)
 export const updateQuiz = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     if (!req.userId) {
