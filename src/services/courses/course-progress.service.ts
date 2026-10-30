@@ -8,6 +8,7 @@ import {
   trainingCourseAssignments,
   trainingCourses,
 } from '../../db/index.ts';
+import { getEmployeeRequiredTrainingStatus } from './course-assignments.service.ts';
 
 export async function getCourseProgress(courseId: string, employeeId: string) {
   const [assignment] = await db
@@ -21,6 +22,7 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
       currentChapterTitleEn: trainingChapters.titleEn,
       currentChapterTitleEs: trainingChapters.titleEs,
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+      isRequiredOrientation: trainingCourses.isRequiredOrientation,
     })
     .from(trainingCourseAssignments)
     .innerJoin(
@@ -46,6 +48,23 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
     });
   }
 
+  if (!assignment.isRequiredOrientation) {
+    const requiredTraining =
+      await getEmployeeRequiredTrainingStatus(employeeId);
+    if (!requiredTraining.isComplete) {
+      throw new ApiError(
+        'Complete required training before opening other courses',
+        403,
+        true,
+        '',
+        {
+          code: 'COURSE_LOCKED_BY_REQUIRED_TRAINING',
+          details: requiredTraining,
+        },
+      );
+    }
+  }
+
   return assignment;
 }
 
@@ -60,6 +79,7 @@ export async function completeCurrentChapter(
       .select({
         currentChapterId: trainingCourseAssignments.currentChapterId,
         courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        isRequiredOrientation: trainingCourses.isRequiredOrientation,
       })
       .from(trainingCourseAssignments)
       .innerJoin(
@@ -79,6 +99,45 @@ export async function completeCurrentChapter(
       throw new ApiError('Course assignment not found', 404, true, '', {
         code: 'COURSE_ASSIGNMENT_NOT_FOUND',
       });
+    }
+    if (!assignment.isRequiredOrientation) {
+      const requiredAssignments = await tx
+        .select({
+          courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        })
+        .from(trainingCourseAssignments)
+        .innerJoin(
+          trainingCourses,
+          eq(trainingCourseAssignments.courseId, trainingCourses.id),
+        )
+        .where(
+          and(
+            eq(trainingCourseAssignments.employeeId, employeeId),
+            eq(trainingCourses.status, 'published'),
+            eq(trainingCourses.isRequiredOrientation, true),
+          ),
+        );
+      const requiredTraining = {
+        requiredCount: requiredAssignments.length,
+        completedCount: requiredAssignments.filter(
+          (item) => item.courseCompletedAt !== null,
+        ).length,
+      };
+      if (requiredTraining.requiredCount !== requiredTraining.completedCount) {
+        throw new ApiError(
+          'Complete required training before opening other courses',
+          403,
+          true,
+          '',
+          {
+            code: 'COURSE_LOCKED_BY_REQUIRED_TRAINING',
+            details: {
+              ...requiredTraining,
+              isComplete: false,
+            },
+          },
+        );
+      }
     }
     if (assignment.courseCompletedAt || !assignment.currentChapterId) {
       throw new ApiError('Course is already complete', 409, true, '', {

@@ -59,10 +59,19 @@ export const listCourses = catchAsync(
       assignment = 'all';
     }
 
+    const employeeCourseIds = req.employee
+      ? (
+          await courseAssignmentsService.listAvailableEmployeeTraining(
+            req.employee.id,
+          )
+        ).assignments.map((assignment) => assignment.courseId)
+      : undefined;
+
     const result = await coursesService.listCourses({
       search,
       status,
       assignment,
+      employeeCourseIds,
       page,
       limit,
     });
@@ -78,12 +87,14 @@ export const listCourses = catchAsync(
 // GET /api/v1/courses/my-training
 export const listMyTraining = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const assignments = await courseAssignmentsService.listEmployeeTraining(
-      requireEmployeeId(req),
-    );
+    const training =
+      await courseAssignmentsService.listAvailableEmployeeTraining(
+        requireEmployeeId(req),
+      );
     res.status(200).json(
       ApiResponse.success('Assigned training retrieved successfully', {
-        assignments,
+        assignments: training.assignments,
+        requiredTraining: training.requiredTraining,
       }),
     );
   },
@@ -121,6 +132,12 @@ export const getCourse = catchAsync(
     }
 
     const course = await coursesService.getCourseById(idValidation.data);
+    if (req.employee?.id) {
+      await courseAssignmentsService.assertEmployeeCanAccessTrainingCourse(
+        idValidation.data,
+        req.employee.id,
+      );
+    }
     res.status(200).json(
       ApiResponse.success('Training course retrieved successfully', {
         course,

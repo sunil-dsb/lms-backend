@@ -10,6 +10,7 @@ import {
   count,
   isNull,
   isNotNull,
+  inArray,
   sql,
 } from 'drizzle-orm';
 import {
@@ -66,6 +67,7 @@ export async function createCourse(
         titleEs: input.titleEs,
         purposeEn: input.purposeEn,
         purposeEs: input.purposeEs,
+        isRequiredOrientation: input.isRequiredOrientation,
         assignUsers: input.assignUsers || [],
         status: 'published',
         createdBy: actor.userId || null,
@@ -185,16 +187,32 @@ export async function listCourses(params: {
   search?: string | undefined;
   status?: TrainingCourseStatus | undefined;
   assignment?: 'all' | 'assigned' | 'unassigned' | undefined;
+  employeeCourseIds?: string[] | undefined;
   page?: number | undefined;
   limit?: number | undefined;
 }): Promise<PaginatedResult<CourseListItem>> {
-  const { search, status, assignment, page = 1, limit = 20 } = params;
+  const {
+    search,
+    status,
+    assignment,
+    employeeCourseIds,
+    page = 1,
+    limit = 20,
+  } = params;
   const offset = (page - 1) * limit;
 
   const conditions: SQL[] = [];
 
   if (status) {
     conditions.push(eq(trainingCourses.status, status));
+  }
+
+  if (employeeCourseIds !== undefined) {
+    conditions.push(
+      employeeCourseIds.length > 0
+        ? inArray(trainingCourses.id, employeeCourseIds)
+        : sql`false`,
+    );
   }
 
   if (assignment === 'assigned') {
@@ -318,6 +336,8 @@ export async function updateCourse(
     if (input.titleEs !== undefined) updateValues.titleEs = input.titleEs;
     if (input.purposeEn !== undefined) updateValues.purposeEn = input.purposeEn;
     if (input.purposeEs !== undefined) updateValues.purposeEs = input.purposeEs;
+    if (input.isRequiredOrientation !== undefined)
+      updateValues.isRequiredOrientation = input.isRequiredOrientation;
     if (input.assignUsers !== undefined)
       updateValues.assignUsers = input.assignUsers;
 

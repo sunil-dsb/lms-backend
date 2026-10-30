@@ -120,6 +120,7 @@ export async function listEmployeeTraining(employeeId: string) {
       purposeEn: trainingCourses.purposeEn,
       purposeEs: trainingCourses.purposeEs,
       courseStatus: trainingCourses.status,
+      isRequiredOrientation: trainingCourses.isRequiredOrientation,
       dueDate: trainingCourseAssignments.dueDate,
       assignedAt: trainingCourseAssignments.assignedAt,
       currentChapterId: trainingCourseAssignments.currentChapterId,
@@ -179,11 +180,129 @@ export async function listEmployeeTraining(employeeId: string) {
   });
 }
 
+export interface EmployeeRequiredTrainingStatus {
+  requiredCount: number;
+  completedCount: number;
+  isComplete: boolean;
+}
+
+/** Required courses are the published, required courses assigned to this employee. */
+export async function getEmployeeRequiredTrainingStatus(
+  employeeId: string,
+): Promise<EmployeeRequiredTrainingStatus> {
+  const requiredAssignments = await db
+    .select({ courseCompletedAt: trainingCourseAssignments.courseCompletedAt })
+    .from(trainingCourseAssignments)
+    .innerJoin(
+      trainingCourses,
+      eq(trainingCourseAssignments.courseId, trainingCourses.id),
+    )
+    .where(
+      and(
+        eq(trainingCourseAssignments.employeeId, employeeId),
+        eq(trainingCourses.status, 'published'),
+        eq(trainingCourses.isRequiredOrientation, true),
+      ),
+    );
+
+  const completedCount = requiredAssignments.filter(
+    (assignment) => assignment.courseCompletedAt !== null,
+  ).length;
+
+  return {
+    requiredCount: requiredAssignments.length,
+    completedCount,
+    isComplete: completedCount === requiredAssignments.length,
+  };
+}
+
+/** Employee list: every assignment stays visible. Non-required courses carry
+ *  `locked: true` while any required course is incomplete, so the client can
+ *  render them as locked blocks (like the Home and Procedures lock states) and
+ *  the detail endpoint still refuses deep links (`assertEmployeeCanAccessTrainingCourse`). */
+export async function listAvailableEmployeeTraining(employeeId: string) {
+  const assignments = await listEmployeeTraining(employeeId);
+  const requiredTraining = {
+    requiredCount: assignments.filter((a) => a.isRequiredOrientation).length,
+    completedCount: assignments.filter(
+      (a) => a.isRequiredOrientation && a.courseCompletedAt !== null,
+    ).length,
+    isComplete: false,
+  };
+  requiredTraining.isComplete =
+    requiredTraining.completedCount === requiredTraining.requiredCount;
+  const requiredDone = requiredTraining.isComplete;
+
+  return {
+    assignments: assignments.map((assignment) => ({
+      ...assignment,
+      locked: !assignment.isRequiredOrientation && !requiredDone,
+    })),
+    requiredTraining: {
+      ...requiredTraining,
+      lockedCount: requiredDone
+        ? 0
+        : assignments.filter((assignment) => !assignment.isRequiredOrientation)
+            .length,
+    },
+  };
+}
+
+/** Ensures the employee is assigned, the course is published, and the prerequisite gate is clear. */
+export async function assertEmployeeCanAccessTrainingCourse(
+  courseId: string,
+  employeeId: string,
+): Promise<void> {
+  const [courseAssignment] = await db
+    .select({
+      courseStatus: trainingCourses.status,
+      isRequiredOrientation: trainingCourses.isRequiredOrientation,
+    })
+    .from(trainingCourseAssignments)
+    .innerJoin(
+      trainingCourses,
+      eq(trainingCourseAssignments.courseId, trainingCourses.id),
+    )
+    .where(
+      and(
+        eq(trainingCourseAssignments.courseId, courseId),
+        eq(trainingCourseAssignments.employeeId, employeeId),
+        eq(trainingCourses.status, 'published'),
+      ),
+    )
+    .limit(1);
+
+  if (!courseAssignment) {
+    throw new ApiError('Course assignment not found', 404, true, '', {
+      code: 'COURSE_ASSIGNMENT_NOT_FOUND',
+    });
+  }
+
+  if (!courseAssignment.isRequiredOrientation) {
+    const requiredTraining =
+      await getEmployeeRequiredTrainingStatus(employeeId);
+    if (!requiredTraining.isComplete) {
+      throw new ApiError(
+        'Complete required training before opening other courses',
+        403,
+        true,
+        '',
+        {
+          code: 'COURSE_LOCKED_BY_REQUIRED_TRAINING',
+          details: requiredTraining,
+        },
+      );
+    }
+  }
+}
+
 /** Fetches chapter content and progress for one assigned employee course. */
 export async function getEmployeeTrainingCourse(
   courseId: string,
   employeeId: string,
 ) {
+  await assertEmployeeCanAccessTrainingCourse(courseId, employeeId);
+
   const [assignment] = await db
     .select()
     .from(trainingCourseAssignments)
