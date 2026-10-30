@@ -6,6 +6,7 @@ import {
   trainingChapters,
   trainingCourseAssignments,
   trainingCourses,
+  quiz,
   type Quiz,
 } from '../../db/index.ts';
 import { logger } from '../../config/logger.ts';
@@ -42,6 +43,36 @@ function employeeQuiz(quizValue: Quiz | null | undefined) {
     questions,
     questionCount: questions.length,
   };
+}
+
+function hasValidAuthoredQuestion(questions: unknown): boolean {
+  if (!Array.isArray(questions) || questions.length === 0) return false;
+  return questions.some((q) => {
+    if (!q || typeof q !== 'object') return false;
+    const rec = q as Record<string, unknown>;
+    const prompt = (rec.prompt ?? rec.question ?? rec.title) as
+      string | { en?: string; es?: string } | undefined;
+    const promptText =
+      typeof prompt === 'string'
+        ? prompt.trim()
+        : String(prompt?.en ?? prompt?.es ?? '').trim();
+    const choices = rec.choices;
+    const hasChoices =
+      Array.isArray(choices) &&
+      choices.some((c) => {
+        if (!c || typeof c !== 'object') return false;
+        const cRec = c as Record<string, unknown>;
+        const lbl = (cRec.label ?? cRec.text) as
+          string | { en?: string; es?: string } | undefined;
+        return typeof lbl === 'string'
+          ? lbl.trim().length > 0
+          : Boolean(
+              (typeof lbl?.en === 'string' && lbl.en.trim()) ||
+              (typeof lbl?.es === 'string' && lbl.es.trim()),
+            );
+      });
+    return Boolean(promptText || hasChoices);
+  });
 }
 
 function chapterDisplayData(chapter: CourseWithChapters['chapters'][number]) {
@@ -106,7 +137,12 @@ export async function listEmployeeTraining(employeeId: string) {
       trainingChapters,
       eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
     )
-    .where(eq(trainingCourseAssignments.employeeId, employeeId))
+    .where(
+      and(
+        eq(trainingCourseAssignments.employeeId, employeeId),
+        eq(trainingCourses.status, 'published'),
+      ),
+    )
     .orderBy(desc(trainingCourseAssignments.assignedAt));
 
   if (assignments.length === 0) return [];
@@ -166,6 +202,11 @@ export async function getEmployeeTrainingCourse(
   }
 
   const course = await getCourseById(courseId);
+  if (course.status !== 'published') {
+    throw new ApiError('Course not found', 404, true, '', {
+      code: 'COURSE_NOT_FOUND',
+    });
+  }
   const chapters = course.chapters.map(chapterDisplayData);
   const currentIndex = chapters.findIndex(
     (chapter) => chapter.id === assignment.currentChapterId,
@@ -229,12 +270,52 @@ export async function assignCourse(
       });
     }
 
-    const [firstChapter] = await tx
-      .select({ id: trainingChapters.id })
+    const chapters = await tx
+      .select({
+        id: trainingChapters.id,
+        number: trainingChapters.number,
+        titleEn: trainingChapters.titleEn,
+        quizId: trainingChapters.quizId,
+        questions: quiz.questions,
+      })
       .from(trainingChapters)
+      .leftJoin(quiz, eq(trainingChapters.quizId, quiz.id))
       .where(eq(trainingChapters.courseId, courseId))
-      .orderBy(asc(trainingChapters.number))
-      .limit(1);
+      .orderBy(asc(trainingChapters.number));
+
+    if (chapters.length === 0) {
+      throw new ApiError(
+        'Cannot assign course: The course must have at least one chapter.',
+        400,
+        true,
+        '',
+        { code: 'COURSE_HAS_NO_CHAPTERS' },
+      );
+    }
+
+    const chaptersWithoutQuestions = chapters.filter(
+      (ch) => !ch.quizId || !hasValidAuthoredQuestion(ch.questions),
+    );
+
+    if (chaptersWithoutQuestions.length > 0) {
+      const chapterNumbers = chaptersWithoutQuestions
+        .map((ch) => ch.number)
+        .join(', ');
+      throw new ApiError(
+        `Cannot assign course: Chapter(s) ${chapterNumbers} do not have any quiz questions. Every chapter must have at least one question to track employee progress.`,
+        400,
+        true,
+        '',
+        {
+          code: 'CHAPTERS_MISSING_QUIZ_QUESTIONS',
+          details: {
+            chapterNumbers: chaptersWithoutQuestions.map((ch) => ch.number),
+          },
+        },
+      );
+    }
+
+    const firstChapter = chapters[0];
 
     const validEmployees = await tx
       .select({ id: employees.id })

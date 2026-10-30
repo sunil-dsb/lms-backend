@@ -23,6 +23,10 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
     })
     .from(trainingCourseAssignments)
+    .innerJoin(
+      trainingCourses,
+      eq(trainingCourseAssignments.courseId, trainingCourses.id),
+    )
     .leftJoin(
       trainingChapters,
       eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
@@ -31,6 +35,7 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
       and(
         eq(trainingCourseAssignments.courseId, courseId),
         eq(trainingCourseAssignments.employeeId, employeeId),
+        eq(trainingCourses.status, 'published'),
       ),
     )
     .limit(1);
@@ -57,10 +62,15 @@ export async function completeCurrentChapter(
         courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
       })
       .from(trainingCourseAssignments)
+      .innerJoin(
+        trainingCourses,
+        eq(trainingCourseAssignments.courseId, trainingCourses.id),
+      )
       .where(
         and(
           eq(trainingCourseAssignments.courseId, courseId),
           eq(trainingCourseAssignments.employeeId, employeeId),
+          eq(trainingCourses.status, 'published'),
         ),
       )
       .limit(1);
@@ -99,17 +109,7 @@ export async function completeCurrentChapter(
         code: 'CHAPTER_NOT_FOUND',
       });
     }
-    if (!currentChapter.quizId) {
-      throw new ApiError(
-        'This chapter has no quiz to complete',
-        409,
-        true,
-        '',
-        {
-          code: 'CHAPTER_QUIZ_REQUIRED',
-        },
-      );
-    }
+    // Chapter completion advances progress whether quiz was required or not
 
     const [nextChapter] = await tx
       .select({ id: trainingChapters.id })
