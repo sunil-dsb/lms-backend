@@ -6,6 +6,7 @@ import {
   uniqueIndex,
   index,
   uuid,
+  boolean,
 } from 'drizzle-orm/pg-core';
 import { subcategories } from './subcategories.schema.ts';
 import { quiz } from './quiz.schema.ts';
@@ -40,6 +41,12 @@ export const procedures = pgTable(
     previousStatus: text('previous_status').$type<ProcedureStatus>(),
     blocksEn: jsonb('blocks_en').$type<unknown>().notNull(),
     blocksEs: jsonb('blocks_es').$type<unknown>().notNull(),
+    isPromo: boolean('is_promo').default(false).notNull(),
+    promoExpiresAt: timestamp('promo_expires_at', { withTimezone: true }),
+    promoAudience: text('promo_audience')
+      .$type<'station' | 'everyone'>()
+      .default('station')
+      .notNull(),
     createdBy: text('created_by').references(() => user.id, {
       onDelete: 'set null',
     }),
@@ -57,6 +64,7 @@ export const procedures = pgTable(
     byStatus: index('procedures_status_idx').on(t.status),
     // Admin lists are ordered newest-updated first.
     byUpdatedAt: index('procedures_updated_at_idx').on(t.updatedAt),
+    byPromo: index('procedures_promo_idx').on(t.isPromo, t.promoExpiresAt),
   }),
 );
 
@@ -357,6 +365,9 @@ export const createProcedureInputSchema = z.object({
   quizId: z.string().uuid().nullable().optional(),
   procedureImage: z.string().url().nullable().optional(),
   assignUsers: z.array(z.string().uuid()).optional(),
+  isPromo: z.boolean().default(false).optional(),
+  promoExpiresAt: z.string().nullable().optional(),
+  promoAudience: z.enum(['station', 'everyone']).default('station').optional(),
   status: z.enum(['draft', 'published']).default('draft'),
   bodyEn: procedureBodySchema,
   bodyEs: procedureBodySchema,

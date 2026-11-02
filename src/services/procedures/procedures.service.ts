@@ -10,6 +10,7 @@ import {
   count,
   ilike,
   or,
+  gt,
 } from 'drizzle-orm';
 import {
   formatPaginatedResult,
@@ -59,6 +60,9 @@ export interface PublicProcedure {
   procedureImage: string | null;
   assignUsers?: AssignedUserSummary[] | string[] | null;
   isDirectlyAssigned?: boolean;
+  isPromo: boolean;
+  promoExpiresAt: string | null;
+  promoAudience: 'station' | 'everyone';
   status: ProcedureStatus;
   previousStatus: ProcedureStatus | null;
   bodyEn?: ProcedureBody;
@@ -112,6 +116,9 @@ export function publicProcedure(
     quizId: p.quizId,
     procedureImage: p.procedureImage,
     assignUsers: p.assignUsers,
+    isPromo: p.isPromo ?? false,
+    promoExpiresAt: p.promoExpiresAt ? p.promoExpiresAt.toISOString() : null,
+    promoAudience: (p.promoAudience as 'station' | 'everyone') ?? 'station',
     status: p.status,
     previousStatus: (p.previousStatus as ProcedureStatus) ?? null,
     createdBy: p.createdBy,
@@ -299,6 +306,11 @@ export async function createProcedure(
     quizId: input.quizId ?? null,
     procedureImage: input.procedureImage ?? null,
     assignUsers: input.assignUsers ?? null,
+    isPromo: input.isPromo ?? false,
+    promoExpiresAt: input.promoExpiresAt
+      ? new Date(input.promoExpiresAt)
+      : null,
+    promoAudience: input.promoAudience ?? 'station',
     status: input.status,
     blocksEn: bodyEn,
     blocksEs: bodyEs,
@@ -458,6 +470,15 @@ export async function updateProcedure(
       ...(input.assignUsers !== undefined && {
         assignUsers: input.assignUsers,
       }),
+      ...(input.isPromo !== undefined && { isPromo: input.isPromo }),
+      ...(input.promoExpiresAt !== undefined && {
+        promoExpiresAt: input.promoExpiresAt
+          ? new Date(input.promoExpiresAt)
+          : null,
+      }),
+      ...(input.promoAudience !== undefined && {
+        promoAudience: input.promoAudience,
+      }),
       ...(input.status !== undefined && { status: input.status }),
       ...(bodyEn !== undefined && { blocksEn: bodyEn }),
       ...(bodyEs !== undefined && { blocksEs: bodyEs }),
@@ -503,6 +524,7 @@ export async function updateProcedure(
 export async function listProcedures(
   filter: {
     status?: ProcedureStatus | undefined;
+    isPromo?: boolean | undefined;
     stationIds?: string[] | undefined;
     assignedEmployeeId?: string | undefined;
     scope?: string | undefined;
@@ -521,6 +543,10 @@ export async function listProcedures(
     conditions.push(eq(procedures.status, filter.status));
   }
 
+  if (filter.isPromo !== undefined) {
+    conditions.push(eq(procedures.isPromo, filter.isPromo));
+  }
+
   if (filter.assignedEmployeeId) {
     const empId = filter.assignedEmployeeId;
     const hasStations = filter.stationIds && filter.stationIds.length > 0;
@@ -532,15 +558,21 @@ export async function listProcedures(
         )}]`
       : undefined;
 
+    // Active promo marked for 'everyone' is visible to all employees
+    const activeEveryonePromo = and(
+      eq(procedures.isPromo, true),
+      eq(procedures.promoAudience, 'everyone'),
+      gt(procedures.promoExpiresAt, new Date()),
+    );
+
     if (filter.scope === 'mine') {
       conditions.push(userMatch);
     } else {
       // Default: 'all'
-      if (stationMatch) {
-        conditions.push(or(stationMatch, userMatch)!);
-      } else {
-        conditions.push(userMatch);
-      }
+      const matchConditions: SQL[] = [userMatch];
+      if (stationMatch) matchConditions.push(stationMatch);
+      if (activeEveryonePromo) matchConditions.push(activeEveryonePromo);
+      conditions.push(or(...matchConditions)!);
     }
   } else if (filter.stationIds && filter.stationIds.length > 0) {
     conditions.push(

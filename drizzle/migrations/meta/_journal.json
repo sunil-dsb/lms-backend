@@ -57,6 +57,13 @@
       "when": 1793353431304,
       "tag": "0007_silly_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793612871196,
+      "tag": "0008_polite_pepper_potts",
+      "breakpoints": true
     }
   ]
 }
