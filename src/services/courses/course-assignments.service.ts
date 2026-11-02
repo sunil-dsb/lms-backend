@@ -8,6 +8,7 @@ import {
   trainingCourses,
   quiz,
   type Quiz,
+  type UnassignCourseInput,
 } from '../../db/index.ts';
 import { logger } from '../../config/logger.ts';
 import { getCourseById, type CourseWithChapters } from './courses.service.ts';
@@ -524,6 +525,76 @@ export async function assignCourse(
       courseId,
       assignedCount: nextUsers.length,
       assignUsers: nextUsers,
+    };
+  });
+}
+
+/**
+ * Unassigns one or more employees from a training course.
+ */
+export async function unassignCourse(
+  courseId: string,
+  input: UnassignCourseInput,
+): Promise<{
+  courseId: string;
+  unassignedCount: number;
+  remainingCount: number;
+}> {
+  const employeeIds = Array.from(new Set(input.employeeIds));
+
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        id: trainingCourses.id,
+        titleEn: trainingCourses.titleEn,
+        assignUsers: trainingCourses.assignUsers,
+      })
+      .from(trainingCourses)
+      .where(eq(trainingCourses.id, courseId))
+      .limit(1);
+
+    if (!existing) {
+      throw new ApiError('Training course not found', 404, true, '', {
+        code: 'COURSE_NOT_FOUND',
+      });
+    }
+
+    if (employeeIds.length === 0) {
+      return {
+        courseId,
+        unassignedCount: 0,
+        remainingCount: (existing.assignUsers || []).length,
+      };
+    }
+
+    // 1. Delete matching assignments from trainingCourseAssignments
+    await tx
+      .delete(trainingCourseAssignments)
+      .where(
+        and(
+          eq(trainingCourseAssignments.courseId, courseId),
+          inArray(trainingCourseAssignments.employeeId, employeeIds),
+        ),
+      );
+
+    // 2. Remove employeeIds from trainingCourses.assignUsers
+    const currentUsers = existing.assignUsers || [];
+    const unassignSet = new Set(employeeIds);
+    const nextUsers = currentUsers.filter((id) => !unassignSet.has(id));
+
+    await tx
+      .update(trainingCourses)
+      .set({ assignUsers: nextUsers, updatedAt: new Date() })
+      .where(eq(trainingCourses.id, courseId));
+
+    logger.info(
+      `Course "${existing.titleEn}" (${courseId}) unassigned from ${employeeIds.length} employees`,
+    );
+
+    return {
+      courseId,
+      unassignedCount: employeeIds.length,
+      remainingCount: nextUsers.length,
     };
   });
 }

@@ -8,6 +8,7 @@ import {
   unarchiveCourse,
   deleteCourse,
   assignCourse,
+  unassignCourse,
   getMyCourseProgress,
   completeCurrentChapter,
   listMyTraining,
@@ -78,6 +79,13 @@ coursesRoute.post(
   requireAuth,
   requireRoles(['super_admin']),
   assignCourse,
+);
+
+coursesRoute.post(
+  '/:id/unassign',
+  requireAuth,
+  requireRoles(['super_admin']),
+  unassignCourse,
 );
 
 coursesRoute.patch(

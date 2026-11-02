@@ -7,6 +7,7 @@ import {
   createCourseInputSchema,
   updateCourseInputSchema,
   assignCourseInputSchema,
+  unassignCourseInputSchema,
   type TrainingCourseStatus,
 } from '../../db/index.ts';
 import * as coursesService from '../../services/courses/courses.service.ts';
@@ -286,6 +287,41 @@ export const assignCourse = catchAsync(
       .status(200)
       .json(
         ApiResponse.success('Training course assigned successfully', result),
+      );
+  },
+);
+
+// POST /api/v1/courses/:id/unassign
+export const unassignCourse = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const idValidation = uuidParamSchema.safeParse(req.params.id);
+    if (!idValidation.success) {
+      throw new ApiError('Invalid course id format', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const employeeIds =
+      req.body?.employeeIds ||
+      req.body?.userIds ||
+      (req.body?.employeeId ? [req.body.employeeId] : undefined) ||
+      (req.body?.userId ? [req.body.userId] : undefined) ||
+      (Array.isArray(req.body) ? req.body : []);
+
+    const parsed = unassignCourseInputSchema.safeParse({ employeeIds });
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const result = await courseAssignmentsService.unassignCourse(
+      idValidation.data,
+      parsed.data,
+    );
+
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Training course unassigned successfully', result),
       );
   },
 );

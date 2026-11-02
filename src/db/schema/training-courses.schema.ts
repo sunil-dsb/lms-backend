@@ -113,3 +113,10 @@ export const assignCourseInputSchema = z.object({
   mode: z.enum(['add', 'replace']).default('add'),
 });
 export type AssignCourseInput = z.infer<typeof assignCourseInputSchema>;
+
+export const unassignCourseInputSchema = z.object({
+  employeeIds: z
+    .array(z.string().uuid())
+    .min(1, 'At least one employee ID is required'),
+});
+export type UnassignCourseInput = z.infer<typeof unassignCourseInputSchema>;
