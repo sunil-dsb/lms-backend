@@ -408,6 +408,7 @@ export const getEmployeeTraining = catchAsync(
         purposeEn: r.purposeEn,
         purposeEs: r.purposeEs,
         courseStatus: r.courseStatus,
+        isRequired: r.isRequired,
         dueDate: r.dueDate,
         assignedAt: r.assignedAt.toISOString(),
         currentChapterId: r.currentChapterId,

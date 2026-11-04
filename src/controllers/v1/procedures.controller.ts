@@ -17,6 +17,10 @@ import {
 import catchAsync from '../../shared/utils/catchAsync.ts';
 import { uuidIdParam } from '../../shared/common.validation.ts';
 import { z } from 'zod';
+import {
+  assertEmployeeHasCompletedRequiredTraining,
+  isProcedureInEmployeeRequiredCourse,
+} from '../../services/courses/course-assignments.service.ts';
 
 const updateStationsSchema = z.object({
   stationIds: z.array(z.string().uuid()).nullable().optional(),
@@ -245,6 +249,27 @@ export const getProcedure = catchAsync(
       throw new ApiError('Missing procedure slug', 400, true, '', {
         code: 'INVALID_INPUT',
       });
+    }
+
+    if (
+      !req.isSuperAdmin &&
+      req.employee?.role !== 'manager' &&
+      req.employee?.id
+    ) {
+      const courseId =
+        typeof req.query.trainingCourseId === 'string'
+          ? req.query.trainingCourseId
+          : undefined;
+      const isRequiredCourseProcedure = courseId
+        ? await isProcedureInEmployeeRequiredCourse(
+            req.employee.id,
+            courseId,
+            slug,
+          )
+        : false;
+      if (!isRequiredCourseProcedure) {
+        await assertEmployeeHasCompletedRequiredTraining(req.employee.id);
+      }
     }
 
     const procedure = await proceduresService.getProcedureBySlug(slug, {

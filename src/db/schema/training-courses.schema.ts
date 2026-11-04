@@ -89,6 +89,7 @@ export type UpdateCourseInput = z.infer<typeof updateCourseInputSchema>;
 
 export const assignCourseInputSchema = z.object({
   employeeIds: z.array(z.string().uuid()),
+  isRequired: z.boolean().default(false),
   dueDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)')

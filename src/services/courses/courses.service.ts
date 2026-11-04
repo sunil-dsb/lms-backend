@@ -10,6 +10,7 @@ import {
   count,
   isNull,
   isNotNull,
+  inArray,
   sql,
 } from 'drizzle-orm';
 import {
@@ -185,16 +186,32 @@ export async function listCourses(params: {
   search?: string | undefined;
   status?: TrainingCourseStatus | undefined;
   assignment?: 'all' | 'assigned' | 'unassigned' | undefined;
+  employeeCourseIds?: string[] | undefined;
   page?: number | undefined;
   limit?: number | undefined;
 }): Promise<PaginatedResult<CourseListItem>> {
-  const { search, status, assignment, page = 1, limit = 20 } = params;
+  const {
+    search,
+    status,
+    assignment,
+    employeeCourseIds,
+    page = 1,
+    limit = 20,
+  } = params;
   const offset = (page - 1) * limit;
 
   const conditions: SQL[] = [];
 
   if (status) {
     conditions.push(eq(trainingCourses.status, status));
+  }
+
+  if (employeeCourseIds !== undefined) {
+    conditions.push(
+      employeeCourseIds.length > 0
+        ? inArray(trainingCourses.id, employeeCourseIds)
+        : sql`false`,
+    );
   }
 
   if (assignment === 'assigned') {

@@ -60,10 +60,19 @@ export const listCourses = catchAsync(
       assignment = 'all';
     }
 
+    const employeeCourseIds = req.employee
+      ? (
+          await courseAssignmentsService.listAvailableEmployeeTraining(
+            req.employee.id,
+          )
+        ).assignments.map((assignment) => assignment.courseId)
+      : undefined;
+
     const result = await coursesService.listCourses({
       search,
       status,
       assignment,
+      employeeCourseIds,
       page,
       limit,
     });
@@ -79,12 +88,14 @@ export const listCourses = catchAsync(
 // GET /api/v1/courses/my-training
 export const listMyTraining = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
-    const assignments = await courseAssignmentsService.listEmployeeTraining(
-      requireEmployeeId(req),
-    );
+    const training =
+      await courseAssignmentsService.listAvailableEmployeeTraining(
+        requireEmployeeId(req),
+      );
     res.status(200).json(
       ApiResponse.success('Assigned training retrieved successfully', {
-        assignments,
+        assignments: training.assignments,
+        requiredTraining: training.requiredTraining,
       }),
     );
   },
@@ -122,6 +133,12 @@ export const getCourse = catchAsync(
     }
 
     const course = await coursesService.getCourseById(idValidation.data);
+    if (req.employee?.id) {
+      await courseAssignmentsService.assertEmployeeCanAccessTrainingCourse(
+        idValidation.data,
+        req.employee.id,
+      );
+    }
     res.status(200).json(
       ApiResponse.success('Training course retrieved successfully', {
         course,
@@ -254,6 +271,7 @@ export const assignCourse = catchAsync(
         (Array.isArray(req.body) ? req.body : []),
       dueDate: req.body?.dueDate,
       mode: req.body?.mode || 'add',
+      isRequired: req.body?.isRequired,
     };
 
     const parsed = assignCourseInputSchema.safeParse(body);
@@ -389,8 +407,64 @@ export const getCourseAssignments = catchAsync(
 
 // GET /api/v1/courses/admin/progress — Admin: aggregated training progress
 export const getTrainingProgress = catchAsync(
-  async (_req: Request, res: Response): Promise<void> => {
-    const data = await courseProgressService.getTrainingProgress();
+  async (req: Request, res: Response): Promise<void> => {
+    const rawStatus = req.query.status;
+    const validStatuses = ['complete', 'in_progress', 'overdue'] as const;
+    if (
+      rawStatus !== undefined &&
+      (typeof rawStatus !== 'string' ||
+        !validStatuses.includes(rawStatus as (typeof validStatuses)[number]))
+    ) {
+      throw new ApiError('Invalid progress status filter', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+    const rawGroupBy = req.query.groupBy;
+    if (
+      rawGroupBy !== undefined &&
+      rawGroupBy !== 'employee' &&
+      rawGroupBy !== 'course'
+    ) {
+      throw new ApiError('Invalid progress grouping', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+    const parsePositiveInteger = (
+      value: unknown,
+      fallback: number,
+      maximum: number,
+    ): number => {
+      if (value === undefined) return fallback;
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
+        throw new ApiError('Invalid progress pagination', 400, true, '', {
+          code: 'INVALID_INPUT',
+        });
+      }
+      return parsed;
+    };
+    const page = parsePositiveInteger(req.query.page, 1, 1_000_000);
+    const limit = parsePositiveInteger(req.query.limit, 25, 100);
+    const search =
+      typeof req.query.search === 'string' ? req.query.search : undefined;
+    const rawIncludeAssignments = req.query.includeAssignments;
+    if (
+      rawIncludeAssignments !== undefined &&
+      rawIncludeAssignments !== 'true' &&
+      rawIncludeAssignments !== 'false'
+    ) {
+      throw new ApiError('Invalid assignment details option', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+    const data = await courseProgressService.getTrainingProgress({
+      status: rawStatus as (typeof validStatuses)[number] | undefined,
+      groupBy: rawGroupBy as 'employee' | 'course' | undefined,
+      page,
+      limit,
+      search,
+      includeAssignments: rawIncludeAssignments === 'true',
+    });
     res
       .status(200)
       .json(

@@ -8,6 +8,7 @@ import {
   trainingCourseAssignments,
   trainingCourses,
 } from '../../db/index.ts';
+import { getEmployeeRequiredTrainingStatus } from './course-assignments.service.ts';
 
 export async function getCourseProgress(courseId: string, employeeId: string) {
   const [assignment] = await db
@@ -21,6 +22,7 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
       currentChapterTitleEn: trainingChapters.titleEn,
       currentChapterTitleEs: trainingChapters.titleEs,
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+      isRequired: trainingCourseAssignments.isRequired,
     })
     .from(trainingCourseAssignments)
     .innerJoin(
@@ -46,6 +48,23 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
     });
   }
 
+  if (!assignment.isRequired) {
+    const requiredTraining =
+      await getEmployeeRequiredTrainingStatus(employeeId);
+    if (!requiredTraining.isComplete) {
+      throw new ApiError(
+        'Complete required training before opening other courses',
+        403,
+        true,
+        '',
+        {
+          code: 'COURSE_LOCKED_BY_REQUIRED_TRAINING',
+          details: requiredTraining,
+        },
+      );
+    }
+  }
+
   return assignment;
 }
 
@@ -60,6 +79,7 @@ export async function completeCurrentChapter(
       .select({
         currentChapterId: trainingCourseAssignments.currentChapterId,
         courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        isRequired: trainingCourseAssignments.isRequired,
       })
       .from(trainingCourseAssignments)
       .innerJoin(
@@ -79,6 +99,45 @@ export async function completeCurrentChapter(
       throw new ApiError('Course assignment not found', 404, true, '', {
         code: 'COURSE_ASSIGNMENT_NOT_FOUND',
       });
+    }
+    if (!assignment.isRequired) {
+      const requiredAssignments = await tx
+        .select({
+          courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        })
+        .from(trainingCourseAssignments)
+        .innerJoin(
+          trainingCourses,
+          eq(trainingCourseAssignments.courseId, trainingCourses.id),
+        )
+        .where(
+          and(
+            eq(trainingCourseAssignments.employeeId, employeeId),
+            eq(trainingCourses.status, 'published'),
+            eq(trainingCourseAssignments.isRequired, true),
+          ),
+        );
+      const requiredTraining = {
+        requiredCount: requiredAssignments.length,
+        completedCount: requiredAssignments.filter(
+          (item) => item.courseCompletedAt !== null,
+        ).length,
+      };
+      if (requiredTraining.requiredCount !== requiredTraining.completedCount) {
+        throw new ApiError(
+          'Complete required training before opening other courses',
+          403,
+          true,
+          '',
+          {
+            code: 'COURSE_LOCKED_BY_REQUIRED_TRAINING',
+            details: {
+              ...requiredTraining,
+              isComplete: false,
+            },
+          },
+        );
+      }
     }
     if (assignment.courseCompletedAt || !assignment.currentChapterId) {
       throw new ApiError('Course is already complete', 409, true, '', {
@@ -150,12 +209,22 @@ export async function completeCurrentChapter(
 /**
  * Aggregated training progress for Admin Progress tab (`/admin/training/progress`).
  */
-export async function getTrainingProgress() {
+export interface TrainingProgressOptions {
+  status?: 'complete' | 'in_progress' | 'overdue';
+  groupBy?: 'employee' | 'course';
+  page?: number;
+  limit?: number;
+  search?: string;
+  includeAssignments?: boolean;
+}
+
+export async function getTrainingProgress(
+  options: TrainingProgressOptions = {},
+) {
   const todayStart = new Date().setHours(0, 0, 0, 0);
 
   const rows = await db
     .select({
-      id: trainingCourseAssignments.id,
       courseId: trainingCourseAssignments.courseId,
       courseTitleEn: trainingCourses.titleEn,
       courseTitleEs: trainingCourses.titleEs,
@@ -163,10 +232,8 @@ export async function getTrainingProgress() {
       employeeName: employees.name,
       stationIds: employees.stationIds,
       dueDate: trainingCourseAssignments.dueDate,
-      currentChapterId: trainingCourseAssignments.currentChapterId,
       currentChapterNumber: trainingChapters.number,
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
-      assignedAt: trainingCourseAssignments.assignedAt,
     })
     .from(trainingCourseAssignments)
     .innerJoin(
@@ -180,7 +247,9 @@ export async function getTrainingProgress() {
     .leftJoin(
       trainingChapters,
       eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
-    );
+    )
+    // Match the employee drill-down, which shows published courses only.
+    .where(eq(trainingCourses.status, 'published'));
 
   const allStations = await db
     .select({ id: stations.id, name: stations.name })
@@ -321,7 +390,19 @@ export async function getTrainingProgress() {
       // Per-assignment detail for drill-downs and the admin home card — the
       // Progress table ignores it, but the dashboard groups by person/week
       // (overdue, due this week) which needs every assignment's due date.
-      assignments: emp.assignments,
+      ...(options.includeAssignments
+        ? {
+            assignments: emp.assignments.map((assignment) => ({
+              courseId: assignment.course.id,
+              courseTitleEn: assignment.course.titleEn,
+              courseTitleEs: assignment.course.titleEs,
+              dueDate: assignment.dueDate,
+              isComplete: assignment.isComplete,
+              isOverdue: assignment.isOverdue,
+              courseCompletedAt: assignment.courseCompletedAt,
+            })),
+          }
+        : {}),
     };
   });
 
@@ -345,13 +426,65 @@ export async function getTrainingProgress() {
     };
   });
 
+  let filteredEmployees = options.status
+    ? employeesList.filter((employee) => employee.status === options.status)
+    : employeesList;
+  let filteredCourses = options.status
+    ? coursesList.filter((course) => course.status === options.status)
+    : coursesList;
+
+  // Group tab counts reflect the selected status, independent of the search
+  // term and current page. Pagination totals below still include search.
+  const counts = {
+    employees: filteredEmployees.length,
+    courses: filteredCourses.length,
+  };
+
+  const search = options.search?.trim().toLocaleLowerCase();
+  if (search) {
+    filteredEmployees = filteredEmployees.filter((employee) =>
+      employee.name.toLocaleLowerCase().includes(search),
+    );
+    filteredCourses = filteredCourses.filter((course) =>
+      `${course.course.titleEn} ${course.course.titleEs}`
+        .toLocaleLowerCase()
+        .includes(search),
+    );
+  }
+
+  let pagination:
+    | { page: number; limit: number; total: number; totalPages: number }
+    | undefined;
+  if (options.groupBy) {
+    const page = options.page ?? 1;
+    const limit = options.limit ?? 25;
+    const rows =
+      options.groupBy === 'employee' ? filteredEmployees : filteredCourses;
+    pagination = {
+      page,
+      limit,
+      total: rows.length,
+      totalPages: Math.ceil(rows.length / limit),
+    };
+    const start = (page - 1) * limit;
+    if (options.groupBy === 'employee') {
+      filteredEmployees = filteredEmployees.slice(start, start + limit);
+      filteredCourses = [];
+    } else {
+      filteredCourses = filteredCourses.slice(start, start + limit);
+      filteredEmployees = [];
+    }
+  }
+
   return {
     summary: {
       completed,
       inProgress,
       overdue,
     },
-    employees: employeesList,
-    courses: coursesList,
+    counts,
+    employees: filteredEmployees,
+    courses: filteredCourses,
+    ...(pagination ? { pagination } : {}),
   };
 }

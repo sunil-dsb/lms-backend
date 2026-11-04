@@ -1,0 +1,1 @@
+ALTER TABLE "training_courses" ADD COLUMN "is_required_orientation" boolean DEFAULT false NOT NULL;

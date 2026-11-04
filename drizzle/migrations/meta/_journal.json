@@ -50,6 +50,27 @@
       "when": 1793188733694,
       "tag": "0006_short_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793353431304,
+      "tag": "0007_silly_shotgun",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793612871196,
+      "tag": "0008_polite_pepper_potts",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793800000000,
+      "tag": "0009_required_assignments",
+      "breakpoints": true
     }
   ]
 }

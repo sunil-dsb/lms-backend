@@ -1,4 +1,5 @@
 import {
+  boolean,
   date,
   index,
   pgTable,
@@ -21,6 +22,7 @@ export const trainingCourseAssignments = pgTable(
     employeeId: uuid('employee_id')
       .notNull()
       .references(() => employees.id, { onDelete: 'cascade' }),
+    isRequired: boolean('is_required').notNull().default(false),
     dueDate: date('due_date', { mode: 'string' }).notNull(),
     currentChapterId: uuid('current_chapter_id').references(
       () => trainingChapters.id,
