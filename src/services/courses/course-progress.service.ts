@@ -215,6 +215,7 @@ export interface TrainingProgressOptions {
   page?: number;
   limit?: number;
   search?: string;
+  includeAssignments?: boolean;
 }
 
 export async function getTrainingProgress(
@@ -224,7 +225,6 @@ export async function getTrainingProgress(
 
   const rows = await db
     .select({
-      id: trainingCourseAssignments.id,
       courseId: trainingCourseAssignments.courseId,
       courseTitleEn: trainingCourses.titleEn,
       courseTitleEs: trainingCourses.titleEs,
@@ -232,10 +232,8 @@ export async function getTrainingProgress(
       employeeName: employees.name,
       stationIds: employees.stationIds,
       dueDate: trainingCourseAssignments.dueDate,
-      currentChapterId: trainingCourseAssignments.currentChapterId,
       currentChapterNumber: trainingChapters.number,
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
-      assignedAt: trainingCourseAssignments.assignedAt,
     })
     .from(trainingCourseAssignments)
     .innerJoin(
@@ -392,7 +390,19 @@ export async function getTrainingProgress(
       // Per-assignment detail for drill-downs and the admin home card — the
       // Progress table ignores it, but the dashboard groups by person/week
       // (overdue, due this week) which needs every assignment's due date.
-      assignments: emp.assignments,
+      ...(options.includeAssignments
+        ? {
+            assignments: emp.assignments.map((assignment) => ({
+              courseId: assignment.course.id,
+              courseTitleEn: assignment.course.titleEn,
+              courseTitleEs: assignment.course.titleEs,
+              dueDate: assignment.dueDate,
+              isComplete: assignment.isComplete,
+              isOverdue: assignment.isOverdue,
+              courseCompletedAt: assignment.courseCompletedAt,
+            })),
+          }
+        : {}),
     };
   });
 

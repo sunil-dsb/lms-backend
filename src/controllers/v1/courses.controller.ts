@@ -447,12 +447,23 @@ export const getTrainingProgress = catchAsync(
     const limit = parsePositiveInteger(req.query.limit, 25, 100);
     const search =
       typeof req.query.search === 'string' ? req.query.search : undefined;
+    const rawIncludeAssignments = req.query.includeAssignments;
+    if (
+      rawIncludeAssignments !== undefined &&
+      rawIncludeAssignments !== 'true' &&
+      rawIncludeAssignments !== 'false'
+    ) {
+      throw new ApiError('Invalid assignment details option', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
     const data = await courseProgressService.getTrainingProgress({
       status: rawStatus as (typeof validStatuses)[number] | undefined,
       groupBy: rawGroupBy as 'employee' | 'course' | undefined,
       page,
       limit,
       search,
+      includeAssignments: rawIncludeAssignments === 'true',
     });
     res
       .status(200)
