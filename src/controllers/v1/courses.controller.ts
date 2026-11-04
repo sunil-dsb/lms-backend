@@ -458,11 +458,15 @@ export const getTrainingProgress = catchAsync(
       });
     }
     const data = await courseProgressService.getTrainingProgress({
-      status: rawStatus as (typeof validStatuses)[number] | undefined,
-      groupBy: rawGroupBy as 'employee' | 'course' | undefined,
+      ...(typeof rawStatus === 'string'
+        ? { status: rawStatus as (typeof validStatuses)[number] }
+        : {}),
+      ...(rawGroupBy === 'employee' || rawGroupBy === 'course'
+        ? { groupBy: rawGroupBy }
+        : {}),
       page,
       limit,
-      search,
+      ...(search !== undefined ? { search } : {}),
       includeAssignments: rawIncludeAssignments === 'true',
     });
     res
