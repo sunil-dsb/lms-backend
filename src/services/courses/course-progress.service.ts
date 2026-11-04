@@ -285,7 +285,7 @@ export async function getTrainingProgress(
       course: { id: string; titleEn: string; titleEs: string };
       peopleDone: number;
       peopleTotal: number;
-      activeChapters: number[];
+      currentChapter: number | null;
       hasOverdue: boolean;
     }
   >();
@@ -344,7 +344,7 @@ export async function getTrainingProgress(
         },
         peopleDone: 0,
         peopleTotal: 0,
-        activeChapters: [],
+        currentChapter: null,
         hasOverdue: false,
       };
       courseMap.set(r.courseId, courseEntry);
@@ -354,7 +354,10 @@ export async function getTrainingProgress(
       courseEntry.peopleDone++;
     } else {
       if (r.currentChapterNumber) {
-        courseEntry.activeChapters.push(r.currentChapterNumber);
+        courseEntry.currentChapter =
+          courseEntry.currentChapter === null
+            ? r.currentChapterNumber
+            : Math.min(courseEntry.currentChapter, r.currentChapterNumber);
       }
       if (isOverdue) courseEntry.hasOverdue = true;
     }
@@ -414,14 +417,11 @@ export async function getTrainingProgress(
         ? 'overdue'
         : 'in_progress';
 
-    const currentChapter =
-      c.activeChapters.length > 0 ? Math.min(...c.activeChapters) : null;
-
     return {
       course: c.course,
       peopleDone: c.peopleDone,
       peopleTotal: c.peopleTotal,
-      currentChapter,
+      currentChapter: c.currentChapter,
       status,
     };
   });
@@ -460,13 +460,15 @@ export async function getTrainingProgress(
     const limit = options.limit ?? 25;
     const rows =
       options.groupBy === 'employee' ? filteredEmployees : filteredCourses;
+    const totalPages = Math.ceil(rows.length / limit);
+    const currentPage = totalPages === 0 ? 1 : Math.min(page, totalPages);
     pagination = {
-      page,
+      page: currentPage,
       limit,
       total: rows.length,
-      totalPages: Math.ceil(rows.length / limit),
+      totalPages,
     };
-    const start = (page - 1) * limit;
+    const start = (currentPage - 1) * limit;
     if (options.groupBy === 'employee') {
       filteredEmployees = filteredEmployees.slice(start, start + limit);
       filteredCourses = [];
