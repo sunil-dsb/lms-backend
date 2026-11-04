@@ -10,7 +10,6 @@ import {
   count,
   ilike,
   or,
-  gt,
 } from 'drizzle-orm';
 import {
   formatPaginatedResult,
@@ -558,21 +557,18 @@ export async function listProcedures(
         )}]`
       : undefined;
 
-    // Active promo marked for 'everyone' is visible to all employees
-    const activeEveryonePromo = and(
-      eq(procedures.isPromo, true),
-      eq(procedures.promoAudience, 'everyone'),
-      gt(procedures.promoExpiresAt, new Date()),
-    );
-
     if (filter.scope === 'mine') {
       conditions.push(userMatch);
     } else {
-      // Default: 'all'
-      const matchConditions: SQL[] = [userMatch];
-      if (stationMatch) matchConditions.push(stationMatch);
-      if (activeEveryonePromo) matchConditions.push(activeEveryonePromo);
-      conditions.push(or(...matchConditions)!);
+      // Employees can see procedures assigned to them or their stations.
+      // Unscoped, non-promo procedures are kitchen-wide. Promos remain limited
+      // to their selected station IDs.
+      const visibilityMatches: SQL[] = [userMatch];
+      if (stationMatch) visibilityMatches.push(stationMatch);
+      const kitchenWideMatch = sql`${procedures.isPromo} = false AND coalesce(array_length(${procedures.stationIds}, 1), 0) = 0`;
+      visibilityMatches.push(kitchenWideMatch);
+
+      conditions.push(or(...visibilityMatches)!);
     }
   } else if (filter.stationIds && filter.stationIds.length > 0) {
     conditions.push(
