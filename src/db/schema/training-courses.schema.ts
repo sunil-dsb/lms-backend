@@ -1,11 +1,4 @@
-import {
-  boolean,
-  pgTable,
-  text,
-  timestamp,
-  index,
-  uuid,
-} from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, index, uuid } from 'drizzle-orm/pg-core';
 import { user } from './auth.schema.ts';
 import { z } from 'zod';
 
@@ -28,9 +21,6 @@ export const trainingCourses = pgTable(
       .$type<TrainingCourseStatus>()
       .notNull()
       .default('published'),
-    isRequiredOrientation: boolean('is_required_orientation')
-      .notNull()
-      .default(false),
     assignUsers: uuid('assign_users').array(),
     createdBy: text('created_by').references(() => user.id, {
       onDelete: 'set null',
@@ -77,7 +67,6 @@ export const createCourseInputSchema = z.object({
   titleEs: z.string().trim().min(1, 'Spanish title is required'),
   purposeEn: z.string().trim().min(1, 'English purpose is required'),
   purposeEs: z.string().trim().min(1, 'Spanish purpose is required'),
-  isRequiredOrientation: z.boolean().default(false),
   assignUsers: z.array(z.string().uuid()).optional(),
   /** Chapters can be supplied immediately on creation. */
   chapters: z.array(chapterInputSchema).default([]),
@@ -89,7 +78,6 @@ export const updateCourseInputSchema = z.object({
   titleEs: z.string().trim().min(1).optional(),
   purposeEn: z.string().trim().min(1).optional(),
   purposeEs: z.string().trim().min(1).optional(),
-  isRequiredOrientation: z.boolean().optional(),
   assignUsers: z.array(z.string().uuid()).optional(),
   /**
    * Full chapter array. When provided the service replaces the entire chapter
@@ -101,6 +89,7 @@ export type UpdateCourseInput = z.infer<typeof updateCourseInputSchema>;
 
 export const assignCourseInputSchema = z.object({
   employeeIds: z.array(z.string().uuid()),
+  isRequired: z.boolean().default(false),
   dueDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)')

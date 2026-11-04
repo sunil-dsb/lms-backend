@@ -22,7 +22,7 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
       currentChapterTitleEn: trainingChapters.titleEn,
       currentChapterTitleEs: trainingChapters.titleEs,
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
-      isRequiredOrientation: trainingCourses.isRequiredOrientation,
+      isRequired: trainingCourseAssignments.isRequired,
     })
     .from(trainingCourseAssignments)
     .innerJoin(
@@ -48,7 +48,7 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
     });
   }
 
-  if (!assignment.isRequiredOrientation) {
+  if (!assignment.isRequired) {
     const requiredTraining =
       await getEmployeeRequiredTrainingStatus(employeeId);
     if (!requiredTraining.isComplete) {
@@ -79,7 +79,7 @@ export async function completeCurrentChapter(
       .select({
         currentChapterId: trainingCourseAssignments.currentChapterId,
         courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
-        isRequiredOrientation: trainingCourses.isRequiredOrientation,
+        isRequired: trainingCourseAssignments.isRequired,
       })
       .from(trainingCourseAssignments)
       .innerJoin(
@@ -100,7 +100,7 @@ export async function completeCurrentChapter(
         code: 'COURSE_ASSIGNMENT_NOT_FOUND',
       });
     }
-    if (!assignment.isRequiredOrientation) {
+    if (!assignment.isRequired) {
       const requiredAssignments = await tx
         .select({
           courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
@@ -114,7 +114,7 @@ export async function completeCurrentChapter(
           and(
             eq(trainingCourseAssignments.employeeId, employeeId),
             eq(trainingCourses.status, 'published'),
-            eq(trainingCourses.isRequiredOrientation, true),
+            eq(trainingCourseAssignments.isRequired, true),
           ),
         );
       const requiredTraining = {
@@ -209,7 +209,17 @@ export async function completeCurrentChapter(
 /**
  * Aggregated training progress for Admin Progress tab (`/admin/training/progress`).
  */
-export async function getTrainingProgress() {
+export interface TrainingProgressOptions {
+  status?: 'complete' | 'in_progress' | 'overdue';
+  groupBy?: 'employee' | 'course';
+  page?: number;
+  limit?: number;
+  search?: string;
+}
+
+export async function getTrainingProgress(
+  options: TrainingProgressOptions = {},
+) {
   const todayStart = new Date().setHours(0, 0, 0, 0);
 
   const rows = await db
@@ -239,7 +249,9 @@ export async function getTrainingProgress() {
     .leftJoin(
       trainingChapters,
       eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
-    );
+    )
+    // Match the employee drill-down, which shows published courses only.
+    .where(eq(trainingCourses.status, 'published'));
 
   const allStations = await db
     .select({ id: stations.id, name: stations.name })
@@ -404,13 +416,65 @@ export async function getTrainingProgress() {
     };
   });
 
+  let filteredEmployees = options.status
+    ? employeesList.filter((employee) => employee.status === options.status)
+    : employeesList;
+  let filteredCourses = options.status
+    ? coursesList.filter((course) => course.status === options.status)
+    : coursesList;
+
+  // Group tab counts reflect the selected status, independent of the search
+  // term and current page. Pagination totals below still include search.
+  const counts = {
+    employees: filteredEmployees.length,
+    courses: filteredCourses.length,
+  };
+
+  const search = options.search?.trim().toLocaleLowerCase();
+  if (search) {
+    filteredEmployees = filteredEmployees.filter((employee) =>
+      employee.name.toLocaleLowerCase().includes(search),
+    );
+    filteredCourses = filteredCourses.filter((course) =>
+      `${course.course.titleEn} ${course.course.titleEs}`
+        .toLocaleLowerCase()
+        .includes(search),
+    );
+  }
+
+  let pagination:
+    | { page: number; limit: number; total: number; totalPages: number }
+    | undefined;
+  if (options.groupBy) {
+    const page = options.page ?? 1;
+    const limit = options.limit ?? 25;
+    const rows =
+      options.groupBy === 'employee' ? filteredEmployees : filteredCourses;
+    pagination = {
+      page,
+      limit,
+      total: rows.length,
+      totalPages: Math.ceil(rows.length / limit),
+    };
+    const start = (page - 1) * limit;
+    if (options.groupBy === 'employee') {
+      filteredEmployees = filteredEmployees.slice(start, start + limit);
+      filteredCourses = [];
+    } else {
+      filteredCourses = filteredCourses.slice(start, start + limit);
+      filteredEmployees = [];
+    }
+  }
+
   return {
     summary: {
       completed,
       inProgress,
       overdue,
     },
-    employees: employeesList,
-    courses: coursesList,
+    counts,
+    employees: filteredEmployees,
+    courses: filteredCourses,
+    ...(pagination ? { pagination } : {}),
   };
 }

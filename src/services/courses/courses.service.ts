@@ -67,7 +67,6 @@ export async function createCourse(
         titleEs: input.titleEs,
         purposeEn: input.purposeEn,
         purposeEs: input.purposeEs,
-        isRequiredOrientation: input.isRequiredOrientation,
         assignUsers: input.assignUsers || [],
         status: 'published',
         createdBy: actor.userId || null,
@@ -336,8 +335,6 @@ export async function updateCourse(
     if (input.titleEs !== undefined) updateValues.titleEs = input.titleEs;
     if (input.purposeEn !== undefined) updateValues.purposeEn = input.purposeEn;
     if (input.purposeEs !== undefined) updateValues.purposeEs = input.purposeEs;
-    if (input.isRequiredOrientation !== undefined)
-      updateValues.isRequiredOrientation = input.isRequiredOrientation;
     if (input.assignUsers !== undefined)
       updateValues.assignUsers = input.assignUsers;
 

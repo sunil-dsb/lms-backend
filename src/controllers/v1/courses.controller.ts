@@ -271,6 +271,7 @@ export const assignCourse = catchAsync(
         (Array.isArray(req.body) ? req.body : []),
       dueDate: req.body?.dueDate,
       mode: req.body?.mode || 'add',
+      isRequired: req.body?.isRequired,
     };
 
     const parsed = assignCourseInputSchema.safeParse(body);
@@ -406,8 +407,53 @@ export const getCourseAssignments = catchAsync(
 
 // GET /api/v1/courses/admin/progress — Admin: aggregated training progress
 export const getTrainingProgress = catchAsync(
-  async (_req: Request, res: Response): Promise<void> => {
-    const data = await courseProgressService.getTrainingProgress();
+  async (req: Request, res: Response): Promise<void> => {
+    const rawStatus = req.query.status;
+    const validStatuses = ['complete', 'in_progress', 'overdue'] as const;
+    if (
+      rawStatus !== undefined &&
+      (typeof rawStatus !== 'string' ||
+        !validStatuses.includes(rawStatus as (typeof validStatuses)[number]))
+    ) {
+      throw new ApiError('Invalid progress status filter', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+    const rawGroupBy = req.query.groupBy;
+    if (
+      rawGroupBy !== undefined &&
+      rawGroupBy !== 'employee' &&
+      rawGroupBy !== 'course'
+    ) {
+      throw new ApiError('Invalid progress grouping', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+    const parsePositiveInteger = (
+      value: unknown,
+      fallback: number,
+      maximum: number,
+    ): number => {
+      if (value === undefined) return fallback;
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
+        throw new ApiError('Invalid progress pagination', 400, true, '', {
+          code: 'INVALID_INPUT',
+        });
+      }
+      return parsed;
+    };
+    const page = parsePositiveInteger(req.query.page, 1, 1_000_000);
+    const limit = parsePositiveInteger(req.query.limit, 25, 100);
+    const search =
+      typeof req.query.search === 'string' ? req.query.search : undefined;
+    const data = await courseProgressService.getTrainingProgress({
+      status: rawStatus as (typeof validStatuses)[number] | undefined,
+      groupBy: rawGroupBy as 'employee' | 'course' | undefined,
+      page,
+      limit,
+      search,
+    });
     res
       .status(200)
       .json(

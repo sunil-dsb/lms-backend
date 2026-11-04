@@ -1,11 +1,21 @@
 import ApiError from '../../shared/utils/ApiError.ts';
-import { and, asc, count, desc, eq, inArray, notInArray } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  notInArray,
+  or,
+} from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import {
   employees,
   trainingChapters,
   trainingCourseAssignments,
   trainingCourses,
+  procedures,
   quiz,
   type Quiz,
   type UnassignCourseInput,
@@ -121,7 +131,7 @@ export async function listEmployeeTraining(employeeId: string) {
       purposeEn: trainingCourses.purposeEn,
       purposeEs: trainingCourses.purposeEs,
       courseStatus: trainingCourses.status,
-      isRequiredOrientation: trainingCourses.isRequiredOrientation,
+      isRequired: trainingCourseAssignments.isRequired,
       dueDate: trainingCourseAssignments.dueDate,
       assignedAt: trainingCourseAssignments.assignedAt,
       currentChapterId: trainingCourseAssignments.currentChapterId,
@@ -202,7 +212,7 @@ export async function getEmployeeRequiredTrainingStatus(
       and(
         eq(trainingCourseAssignments.employeeId, employeeId),
         eq(trainingCourses.status, 'published'),
-        eq(trainingCourses.isRequiredOrientation, true),
+        eq(trainingCourseAssignments.isRequired, true),
       ),
     );
 
@@ -217,6 +227,94 @@ export async function getEmployeeRequiredTrainingStatus(
   };
 }
 
+/** Blocks nonessential employee content until every required assignment is complete. */
+export async function assertEmployeeHasCompletedRequiredTraining(
+  employeeId: string,
+): Promise<void> {
+  const requiredTraining = await getEmployeeRequiredTrainingStatus(employeeId);
+  if (requiredTraining.isComplete) return;
+
+  throw new ApiError(
+    'Complete required training before opening other LMS sections',
+    403,
+    true,
+    '',
+    {
+      code: 'COURSE_LOCKED_BY_REQUIRED_TRAINING',
+      details: requiredTraining,
+    },
+  );
+}
+
+/** Returns true when this procedure is included in a required course assigned
+ *  to the employee. This lets them read course material before completing all
+ *  required training without opening the procedure outside that course path. */
+export async function isProcedureInEmployeeRequiredCourse(
+  employeeId: string,
+  courseId: string,
+  procedureIdOrSlug: string,
+): Promise<boolean> {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      courseId,
+    )
+  ) {
+    return false;
+  }
+
+  const [assignment] = await db
+    .select({ isRequired: trainingCourseAssignments.isRequired })
+    .from(trainingCourseAssignments)
+    .innerJoin(
+      trainingCourses,
+      eq(trainingCourseAssignments.courseId, trainingCourses.id),
+    )
+    .where(
+      and(
+        eq(trainingCourseAssignments.courseId, courseId),
+        eq(trainingCourseAssignments.employeeId, employeeId),
+        eq(trainingCourses.status, 'published'),
+      ),
+    )
+    .limit(1);
+
+  if (!assignment?.isRequired) return false;
+
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      procedureIdOrSlug,
+    );
+  const procedureCondition = isUuid
+    ? or(
+        eq(procedures.id, procedureIdOrSlug),
+        eq(procedures.slug, procedureIdOrSlug),
+      )
+    : eq(procedures.slug, procedureIdOrSlug);
+  const [procedure] = await db
+    .select({ id: procedures.id })
+    .from(procedures)
+    .where(procedureCondition!)
+    .limit(1);
+
+  if (!procedure) return false;
+
+  const course = await getCourseById(courseId);
+  return course.chapters.some((chapter) => {
+    if (chapter.procedureId === procedure.id) return true;
+    const blocks = Array.isArray(chapter.blocks) ? chapter.blocks : [];
+    return blocks.some(
+      (block) =>
+        block &&
+        typeof block === 'object' &&
+        'kind' in block &&
+        block.kind === 'linked_procedures' &&
+        'procedureIds' in block &&
+        Array.isArray(block.procedureIds) &&
+        block.procedureIds.includes(procedure.id),
+    );
+  });
+}
+
 /** Employee list: every assignment stays visible. Non-required courses carry
  *  `locked: true` while any required course is incomplete, so the client can
  *  render them as locked blocks (like the Home and Procedures lock states) and
@@ -224,9 +322,9 @@ export async function getEmployeeRequiredTrainingStatus(
 export async function listAvailableEmployeeTraining(employeeId: string) {
   const assignments = await listEmployeeTraining(employeeId);
   const requiredTraining = {
-    requiredCount: assignments.filter((a) => a.isRequiredOrientation).length,
+    requiredCount: assignments.filter((a) => a.isRequired).length,
     completedCount: assignments.filter(
-      (a) => a.isRequiredOrientation && a.courseCompletedAt !== null,
+      (a) => a.isRequired && a.courseCompletedAt !== null,
     ).length,
     isComplete: false,
   };
@@ -237,14 +335,13 @@ export async function listAvailableEmployeeTraining(employeeId: string) {
   return {
     assignments: assignments.map((assignment) => ({
       ...assignment,
-      locked: !assignment.isRequiredOrientation && !requiredDone,
+      locked: !assignment.isRequired && !requiredDone,
     })),
     requiredTraining: {
       ...requiredTraining,
       lockedCount: requiredDone
         ? 0
-        : assignments.filter((assignment) => !assignment.isRequiredOrientation)
-            .length,
+        : assignments.filter((assignment) => !assignment.isRequired).length,
     },
   };
 }
@@ -257,7 +354,7 @@ export async function assertEmployeeCanAccessTrainingCourse(
   const [courseAssignment] = await db
     .select({
       courseStatus: trainingCourses.status,
-      isRequiredOrientation: trainingCourses.isRequiredOrientation,
+      isRequired: trainingCourseAssignments.isRequired,
     })
     .from(trainingCourseAssignments)
     .innerJoin(
@@ -279,7 +376,7 @@ export async function assertEmployeeCanAccessTrainingCourse(
     });
   }
 
-  if (!courseAssignment.isRequiredOrientation) {
+  if (!courseAssignment.isRequired) {
     const requiredTraining =
       await getEmployeeRequiredTrainingStatus(employeeId);
     if (!requiredTraining.isComplete) {
@@ -368,6 +465,7 @@ export async function assignCourse(
   input: {
     employeeIds: string[];
     dueDate: string;
+    isRequired?: boolean | undefined;
     mode?: 'add' | 'replace' | undefined;
   },
 ): Promise<{ courseId: string; assignedCount: number; assignUsers: string[] }> {
@@ -474,6 +572,7 @@ export async function assignCourse(
             courseId,
             employeeId,
             dueDate: input.dueDate,
+            isRequired: input.isRequired ?? false,
             currentChapterId: firstChapter?.id ?? null,
           })),
         )
@@ -484,6 +583,7 @@ export async function assignCourse(
           ],
           set: {
             dueDate: input.dueDate,
+            isRequired: input.isRequired ?? false,
             currentChapterId: firstChapter?.id ?? null,
             courseCompletedAt: null,
           },
@@ -496,6 +596,7 @@ export async function assignCourse(
             courseId,
             employeeId,
             dueDate: input.dueDate,
+            isRequired: input.isRequired ?? false,
             currentChapterId: firstChapter?.id ?? null,
           })),
         )
@@ -621,6 +722,7 @@ export async function listCourseAssignments(courseId: string) {
       id: trainingCourseAssignments.id,
       courseId: trainingCourseAssignments.courseId,
       employeeId: trainingCourseAssignments.employeeId,
+      isRequired: trainingCourseAssignments.isRequired,
       dueDate: trainingCourseAssignments.dueDate,
       currentChapterId: trainingCourseAssignments.currentChapterId,
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
@@ -667,6 +769,7 @@ export async function listCourseAssignments(courseId: string) {
       id: r.id,
       courseId: r.courseId,
       employeeId: r.employeeId,
+      isRequired: r.isRequired,
       dueDate: r.dueDate,
       dueAt: r.dueDate,
       assignedAt: r.assignedAt.toISOString(),
