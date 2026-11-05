@@ -1,7 +1,7 @@
 import config from '../../config/index.ts';
 
 const ORANGE_THEME = '#C24A30'; // Dark Orange / Rust theme
-const RESTAURANT_NAME = 'Almentria Mexicana';
+const RESTAURANT_NAME = 'Alimentaria Mexicana';
 
 export const getAuthEmailAndResetPasswordTemplate = (
   title: string,

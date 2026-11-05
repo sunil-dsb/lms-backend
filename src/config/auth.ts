@@ -83,9 +83,9 @@ export const auth = betterAuth({
         try {
           const html = getInviteEmailTemplate(emp.name, invitationUrl);
           const { data, error } = await resend.emails.send({
-            from: 'Almentria Mexicana <mihpros@mail.logiccloud.in>',
+            from: 'Alimentaria Mexicana <mihpros@mail.logiccloud.in>',
             to: email,
-            subject: 'Welcome to Almentria Mexicana LMS',
+            subject: 'Welcome to Alimentaria Mexicana LMS',
             html,
           });
           if (error) {
@@ -132,7 +132,7 @@ export const auth = betterAuth({
             otp,
           );
           const { data, error } = await resend.emails.send({
-            from: 'Almentria Mexicana <mihpros@mail.logiccloud.in>',
+            from: 'Alimentaria Mexicana <mihpros@mail.logiccloud.in>',
             to: email,
             subject: 'Your Password Reset Code',
             html,

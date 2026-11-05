@@ -464,7 +464,7 @@ The migration history was squashed into a single `0000_baseline.sql` during deve
 
 [scripts/seed.ts](scripts/seed.ts) runs, in order:
 
-1. `seed-locations.ts` - Mexicana Main, Downtown Express, Almentria Mexicana
+1. `seed-locations.ts` - Alimentaria Mexicana
 2. `seed-jobs.ts` - Line Cook, Prep Cook, Dishwasher (removes jobs not in this list)
 3. `seed-stations.ts` - stations and links them to jobs
 4. Creates a master `super_admin` employee row (fixed id `00000000-0000-0000-0000-000000000000`)
@@ -502,7 +502,7 @@ Things found while reviewing the code. They are worth fixing before production. 
 **Auth and permissions**
 
 - `POST /api/v1/auth/sign-up` (and Better Auth's own `/api/auth/sign-up/email`) is public and creates verified users. Those users have no access to anything, but decide whether sign-up should exist in production at all.
-- The email sender name is spelled "Almentria" in emails and seeds, while the product name is "Alimentaria".
+- The email sender name is spelled "Alimentaria Mexicana" across all emails, seeds, and configurations.
 - The `manager` role is defined but has no permissions.
 - `GET /api/v1/procedures/:slug` returns drafts and archived procedures to any logged-in employee, not only published ones. Decide whether employees should only see published (or assigned) procedures.
 - `GET /api/v1/quizzes/:id` sends `correctChoiceId` to employees, so the answers are visible before taking a quiz. Fixing it needs a different response for employees and a grading endpoint.
