@@ -61,6 +61,7 @@ export interface PublicProcedure {
   isDirectlyAssigned?: boolean;
   isPromo: boolean;
   promoExpiresAt: string | null;
+  promoStartsAt: string | null;
   promoAudience: 'station' | 'everyone';
   status: ProcedureStatus;
   previousStatus: ProcedureStatus | null;
@@ -117,6 +118,7 @@ export function publicProcedure(
     assignUsers: p.assignUsers,
     isPromo: p.isPromo ?? false,
     promoExpiresAt: p.promoExpiresAt ? p.promoExpiresAt.toISOString() : null,
+    promoStartsAt: p.promoStartsAt ? p.promoStartsAt.toISOString() : null,
     promoAudience: (p.promoAudience as 'station' | 'everyone') ?? 'station',
     status: p.status,
     previousStatus: (p.previousStatus as ProcedureStatus) ?? null,
@@ -180,6 +182,42 @@ async function generateUniqueSlug(base: string): Promise<string> {
     if (!exists) return candidate;
   }
   return `${seed}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+/** Validate a list of employee ids: every id must exist and point at an
+ *  employee-role row. Shared by the generic `assignUsers` list and the promo
+ *  employee list so both go through the same existence + role checks. */
+async function assertValidAssignedEmployees(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const assigned = await db
+    .select({ id: employees.id, role: employees.role })
+    .from(employees)
+    .where(
+      sql`${employees.id} = ANY(ARRAY[${sql.join(
+        ids.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )}])`,
+    );
+
+  if (assigned.length !== ids.length) {
+    throw Object.assign(
+      new ApiError('One or more assigned users do not exist', 400),
+      {
+        errorCode: 'ASSIGNED_USER_NOT_FOUND',
+      },
+    );
+  }
+
+  const invalidRoles = assigned.filter((a) => a.role !== 'employee');
+  if (invalidRoles.length > 0) {
+    throw Object.assign(
+      new ApiError(
+        'Only users with the employee role can be assigned to procedures',
+        400,
+      ),
+      { errorCode: 'INVALID_ASSIGNED_USER_ROLE' },
+    );
+  }
 }
 
 export async function createProcedure(
@@ -258,37 +296,7 @@ export async function createProcedure(
   }
 
   // Validate assignUsers to ensure they are valid employees (and not super_admins)
-  if (input.assignUsers && input.assignUsers.length > 0) {
-    const assigned = await db
-      .select({ id: employees.id, role: employees.role })
-      .from(employees)
-      .where(
-        sql`${employees.id} = ANY(ARRAY[${sql.join(
-          input.assignUsers.map((id) => sql`${id}::uuid`),
-          sql`, `,
-        )}])`,
-      );
-
-    if (assigned.length !== input.assignUsers.length) {
-      throw Object.assign(
-        new ApiError('One or more assigned users do not exist', 400),
-        {
-          errorCode: 'ASSIGNED_USER_NOT_FOUND',
-        },
-      );
-    }
-
-    const invalidRoles = assigned.filter((a) => a.role !== 'employee');
-    if (invalidRoles.length > 0) {
-      throw Object.assign(
-        new ApiError(
-          'Only users with the employee role can be assigned to procedures',
-          400,
-        ),
-        { errorCode: 'INVALID_ASSIGNED_USER_ROLE' },
-      );
-    }
-  }
+  await assertValidAssignedEmployees(input.assignUsers ?? []);
 
   const id = crypto.randomUUID();
   const slug = await generateUniqueSlug(slugify(input.titleEn));
@@ -310,6 +318,7 @@ export async function createProcedure(
       ? new Date(input.promoExpiresAt)
       : null,
     promoAudience: input.promoAudience ?? 'station',
+    promoStartsAt: input.promoStartsAt ? new Date(input.promoStartsAt) : null,
     status: input.status,
     blocksEn: bodyEn,
     blocksEs: bodyEs,
@@ -478,6 +487,11 @@ export async function updateProcedure(
       ...(input.promoAudience !== undefined && {
         promoAudience: input.promoAudience,
       }),
+      ...(input.promoStartsAt !== undefined && {
+        promoStartsAt: input.promoStartsAt
+          ? new Date(input.promoStartsAt)
+          : null,
+      }),
       ...(input.status !== undefined && { status: input.status }),
       ...(bodyEn !== undefined && { blocksEn: bodyEn }),
       ...(bodyEs !== undefined && { blocksEs: bodyEs }),
@@ -561,10 +575,25 @@ export async function listProcedures(
       conditions.push(userMatch);
     } else {
       // Employees can see procedures assigned to them or their stations.
-      // Unscoped, non-promo procedures are kitchen-wide. Promos remain limited
-      // to their selected station IDs.
+      // Unscoped, non-promo procedures are kitchen-wide.
+      //
+      // Promos are employee-assigned through the same `assignUsers` list a
+      // manager fills in the editor's Assign block: a promo row is visible
+      // to a viewer only when their employee id is in `assign_users`, and
+      // stations never widen it. Legacy rows with NULL `assign_users` keep
+      // station-based visibility; a newly saved empty array means nobody is
+      // selected and must not widen visibility to the whole station.
       const visibilityMatches: SQL[] = [userMatch];
-      if (stationMatch) visibilityMatches.push(stationMatch);
+      if (stationMatch) {
+        // Non-promo rows: station overlap as before.
+        visibilityMatches.push(
+          sql`${procedures.isPromo} = false AND ${stationMatch}`,
+        );
+        // Legacy promos with NULL employee assignment: station overlap.
+        visibilityMatches.push(
+          sql`${procedures.isPromo} = true AND ${procedures.assignUsers} IS NULL AND ${stationMatch}`,
+        );
+      }
       const kitchenWideMatch = sql`${procedures.isPromo} = false AND coalesce(array_length(${procedures.stationIds}, 1), 0) = 0`;
       visibilityMatches.push(kitchenWideMatch);
 

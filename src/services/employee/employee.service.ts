@@ -1,7 +1,16 @@
-import { eq, inArray, and, ne, gt, desc, ilike } from 'drizzle-orm';
+import { eq, inArray, and, ne, gt, desc, ilike, sql, asc } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees, user, verification } from '../../db/index.ts';
-import { locations, stations, jobs } from '../../db/index.ts';
+import {
+  employees,
+  user,
+  verification,
+  locations,
+  stations,
+  jobs,
+  trainingCourses,
+  trainingChapters,
+  trainingCourseAssignments,
+} from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 import type {
   LanguagePref,
@@ -10,6 +19,7 @@ import type {
 } from '../../db/index.ts';
 import { auth, magicLinkUrls } from '../../config/auth.ts';
 import config from '../../config/index.ts';
+import { logger } from '../../config/logger.ts';
 import crypto from 'node:crypto';
 
 export function normalizeName(name: string): string {
@@ -173,6 +183,72 @@ export async function createEmployeeTransaction(
       status: 'pending',
     });
 
+    // Auto-assign any courses that are required for the employee's stations
+    if (input.stationIds && input.stationIds.length > 0) {
+      try {
+        const matchingCourses = await tx
+          .select({
+            id: trainingCourses.id,
+            assignUsers: trainingCourses.assignUsers,
+          })
+          .from(trainingCourses)
+          .where(
+            and(
+              eq(trainingCourses.status, 'published'),
+              sql`${trainingCourses.stationIds} && ARRAY[${sql.join(
+                input.stationIds.map((id) => sql`${id}::uuid`),
+                sql`, `,
+              )}]`,
+            ),
+          );
+
+        for (const course of matchingCourses) {
+          const [firstChapter] = await tx
+            .select({ id: trainingChapters.id })
+            .from(trainingChapters)
+            .where(eq(trainingChapters.courseId, course.id))
+            .orderBy(asc(trainingChapters.number))
+            .limit(1);
+
+          const defaultDue = new Date();
+          defaultDue.setDate(defaultDue.getDate() + 7);
+          const dueDateStr = defaultDue.toISOString().slice(0, 10);
+
+          await tx
+            .insert(trainingCourseAssignments)
+            .values({
+              courseId: course.id,
+              employeeId,
+              dueDate: dueDateStr,
+              isRequired: true,
+              currentChapterId: firstChapter?.id ?? null,
+            })
+            .onConflictDoNothing({
+              target: [
+                trainingCourseAssignments.courseId,
+                trainingCourseAssignments.employeeId,
+              ],
+            });
+
+          const currentUsers = course.assignUsers || [];
+          if (!currentUsers.includes(employeeId)) {
+            await tx
+              .update(trainingCourses)
+              .set({
+                assignUsers: [...currentUsers, employeeId],
+                updatedAt: new Date(),
+              })
+              .where(eq(trainingCourses.id, course.id));
+          }
+        }
+      } catch (err) {
+        console.error(
+          'Failed to auto-assign station courses to new employee:',
+          err,
+        );
+      }
+    }
+
     void adminId;
 
     const [row] = await tx
@@ -330,6 +406,72 @@ export async function updateEmployeeTransaction(
       throw new ApiError('Error updating employee', 500, true, '', {
         code: 'INTERNAL_ERROR',
       });
+
+    // Auto-assign any newly required courses for the updated stations
+    if (input.stationIds && input.stationIds.length > 0) {
+      try {
+        const matchingCourses = await tx
+          .select({
+            id: trainingCourses.id,
+            assignUsers: trainingCourses.assignUsers,
+          })
+          .from(trainingCourses)
+          .where(
+            and(
+              eq(trainingCourses.status, 'published'),
+              sql`${trainingCourses.stationIds} && ARRAY[${sql.join(
+                input.stationIds.map((id) => sql`${id}::uuid`),
+                sql`, `,
+              )}]`,
+            ),
+          );
+
+        for (const course of matchingCourses) {
+          const [firstChapter] = await tx
+            .select({ id: trainingChapters.id })
+            .from(trainingChapters)
+            .where(eq(trainingChapters.courseId, course.id))
+            .orderBy(asc(trainingChapters.number))
+            .limit(1);
+
+          const defaultDue = new Date();
+          defaultDue.setDate(defaultDue.getDate() + 7);
+          const dueDateStr = defaultDue.toISOString().slice(0, 10);
+
+          await tx
+            .insert(trainingCourseAssignments)
+            .values({
+              courseId: course.id,
+              employeeId: id,
+              dueDate: dueDateStr,
+              isRequired: true,
+              currentChapterId: firstChapter?.id ?? null,
+            })
+            .onConflictDoNothing({
+              target: [
+                trainingCourseAssignments.courseId,
+                trainingCourseAssignments.employeeId,
+              ],
+            });
+
+          const currentUsers = course.assignUsers || [];
+          if (!currentUsers.includes(id)) {
+            await tx
+              .update(trainingCourses)
+              .set({
+                assignUsers: [...currentUsers, id],
+                updatedAt: new Date(),
+              })
+              .where(eq(trainingCourses.id, course.id));
+          }
+        }
+      } catch (err) {
+        logger.error(
+          { err },
+          'Failed to auto-assign station courses to updated employee',
+        );
+      }
+    }
 
     return { employee: updated };
   });

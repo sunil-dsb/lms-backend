@@ -19,6 +19,8 @@ import {
 } from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import {
+  employees,
+  trainingCourseAssignments,
   trainingCourses,
   trainingChapters,
   quiz,
@@ -53,6 +55,83 @@ export interface CourseListItem extends TrainingCourse {
 }
 
 /**
+ * Synchronizes course assignments for all employees belonging to the given stations.
+ * Automatically marks the assignment as required, sets a 7-day due date, and assigns the first chapter.
+ */
+export async function syncCourseStationAssignments(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  courseId: string,
+  stationIds: string[],
+): Promise<void> {
+  if (!stationIds || stationIds.length === 0) return;
+
+  const [firstChapter] = await tx
+    .select({ id: trainingChapters.id })
+    .from(trainingChapters)
+    .where(eq(trainingChapters.courseId, courseId))
+    .orderBy(asc(trainingChapters.number))
+    .limit(1);
+
+  if (!firstChapter) return;
+
+  const stationEmployees = await tx
+    .select({ id: employees.id })
+    .from(employees)
+    .where(
+      and(
+        inArray(employees.status, ['active', 'pending']),
+        sql`${employees.stationIds} && ARRAY[${sql.join(
+          stationIds.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )}]`,
+      ),
+    );
+
+  if (stationEmployees.length === 0) return;
+
+  const defaultDue = new Date();
+  defaultDue.setDate(defaultDue.getDate() + 7);
+  const dueDateStr = defaultDue.toISOString().slice(0, 10);
+
+  const empIds: string[] = stationEmployees.map((e: { id: string }) => e.id);
+
+  for (const empId of empIds) {
+    await tx
+      .insert(trainingCourseAssignments)
+      .values({
+        courseId,
+        employeeId: empId,
+        dueDate: dueDateStr,
+        isRequired: true,
+        currentChapterId: firstChapter.id,
+      })
+      .onConflictDoNothing({
+        target: [
+          trainingCourseAssignments.courseId,
+          trainingCourseAssignments.employeeId,
+        ],
+      });
+  }
+
+  const [course] = await tx
+    .select({ assignUsers: trainingCourses.assignUsers })
+    .from(trainingCourses)
+    .where(eq(trainingCourses.id, courseId))
+    .limit(1);
+
+  const currentUsers = course?.assignUsers || [];
+  const updatedUsers = Array.from(new Set([...currentUsers, ...empIds]));
+  await tx
+    .update(trainingCourses)
+    .set({
+      assignUsers: updatedUsers,
+      updatedAt: new Date(),
+    })
+    .where(eq(trainingCourses.id, courseId));
+}
+
+/**
  * Creates a course and optionally its initial chapters in a single transaction.
  */
 export async function createCourse(
@@ -68,6 +147,7 @@ export async function createCourse(
         purposeEn: input.purposeEn,
         purposeEs: input.purposeEs,
         assignUsers: input.assignUsers || [],
+        stationIds: input.stationIds || [],
         status: 'published',
         createdBy: actor.userId || null,
       })
@@ -122,6 +202,18 @@ export async function createCourse(
             }
           : null,
       }));
+    }
+
+    if (
+      insertedChapters.length > 0 &&
+      input.stationIds &&
+      input.stationIds.length > 0
+    ) {
+      await syncCourseStationAssignments(
+        tx,
+        insertedCourse.id,
+        input.stationIds,
+      );
     }
 
     logger.info(
@@ -337,6 +429,8 @@ export async function updateCourse(
     if (input.purposeEs !== undefined) updateValues.purposeEs = input.purposeEs;
     if (input.assignUsers !== undefined)
       updateValues.assignUsers = input.assignUsers;
+    if (input.stationIds !== undefined)
+      updateValues.stationIds = input.stationIds;
 
     const [updatedCourse] = await tx
       .update(trainingCourses)
@@ -395,6 +489,12 @@ export async function updateCourse(
           }
         : null,
     }));
+
+    const effectiveStationIds =
+      input.stationIds !== undefined ? input.stationIds : existing.stationIds;
+    if (effectiveStationIds && effectiveStationIds.length > 0) {
+      await syncCourseStationAssignments(tx, id, effectiveStationIds);
+    }
 
     logger.info(
       `Course "${updatedCourse.titleEn}" (${id}) updated by ${actor.userId || 'system'}`,

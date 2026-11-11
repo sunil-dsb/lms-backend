@@ -8,6 +8,7 @@ import {
   inArray,
   notInArray,
   or,
+  sql,
 } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import {
@@ -315,11 +316,129 @@ export async function isProcedureInEmployeeRequiredCourse(
   });
 }
 
+/**
+ * Automatically checks if there are any published courses for this employee's station(s)
+ * that have not yet been assigned to them, and creates the assignments.
+ */
+export async function syncEmployeeStationCourses(
+  employeeId: string,
+): Promise<number> {
+  const [emp] = await db
+    .select({
+      id: employees.id,
+      stationIds: employees.stationIds,
+      status: employees.status,
+    })
+    .from(employees)
+    .where(eq(employees.id, employeeId))
+    .limit(1);
+
+  if (
+    !emp ||
+    emp.status === 'deactivated' ||
+    !emp.stationIds ||
+    emp.stationIds.length === 0
+  ) {
+    return 0;
+  }
+
+  const matchingCourses = await db
+    .select({
+      id: trainingCourses.id,
+      assignUsers: trainingCourses.assignUsers,
+    })
+    .from(trainingCourses)
+    .where(
+      and(
+        eq(trainingCourses.status, 'published'),
+        sql`${trainingCourses.stationIds} && ARRAY[${sql.join(
+          emp.stationIds.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )}]`,
+      ),
+    );
+
+  if (matchingCourses.length === 0) {
+    return 0;
+  }
+
+  const existingAssignments = await db
+    .select({ courseId: trainingCourseAssignments.courseId })
+    .from(trainingCourseAssignments)
+    .where(eq(trainingCourseAssignments.employeeId, employeeId));
+
+  const assignedCourseIds = new Set(existingAssignments.map((a) => a.courseId));
+  const coursesToAssign = matchingCourses.filter(
+    (c) => !assignedCourseIds.has(c.id),
+  );
+
+  if (coursesToAssign.length === 0) {
+    return 0;
+  }
+
+  const defaultDue = new Date();
+  defaultDue.setDate(defaultDue.getDate() + 7);
+  const dueDateStr = defaultDue.toISOString().slice(0, 10);
+
+  let newlyAssignedCount = 0;
+
+  for (const course of coursesToAssign) {
+    const [firstChapter] = await db
+      .select({ id: trainingChapters.id })
+      .from(trainingChapters)
+      .where(eq(trainingChapters.courseId, course.id))
+      .orderBy(asc(trainingChapters.number))
+      .limit(1);
+
+    await db
+      .insert(trainingCourseAssignments)
+      .values({
+        courseId: course.id,
+        employeeId,
+        dueDate: dueDateStr,
+        isRequired: true,
+        currentChapterId: firstChapter?.id ?? null,
+      })
+      .onConflictDoNothing({
+        target: [
+          trainingCourseAssignments.courseId,
+          trainingCourseAssignments.employeeId,
+        ],
+      });
+
+    const currentUsers = course.assignUsers || [];
+    if (!currentUsers.includes(employeeId)) {
+      await db
+        .update(trainingCourses)
+        .set({
+          assignUsers: [...currentUsers, employeeId],
+          updatedAt: new Date(),
+        })
+        .where(eq(trainingCourses.id, course.id));
+    }
+
+    newlyAssignedCount++;
+  }
+
+  return newlyAssignedCount;
+}
+
 /** Employee list: every assignment stays visible. Non-required courses carry
  *  `locked: true` while any required course is incomplete, so the client can
  *  render them as locked blocks (like the Home and Procedures lock states) and
  *  the detail endpoint still refuses deep links (`assertEmployeeCanAccessTrainingCourse`). */
 export async function listAvailableEmployeeTraining(employeeId: string) {
+  // Whenever an employee opens dashboard or training, ensure any published courses
+  // for their assigned stations are synced and assigned.
+  try {
+    await syncEmployeeStationCourses(employeeId);
+  } catch (err) {
+    logger.error(
+      `Failed to auto-sync station courses for employee ${employeeId}:`,
+      err,
+    );
+  }
+
   const assignments = await listEmployeeTraining(employeeId);
   const requiredTraining = {
     requiredCount: assignments.filter((a) => a.isRequired).length,
@@ -464,13 +583,12 @@ export async function assignCourse(
   courseId: string,
   input: {
     employeeIds: string[];
+    stationIds?: string[] | undefined;
     dueDate: string;
     isRequired?: boolean | undefined;
     mode?: 'add' | 'replace' | undefined;
   },
 ): Promise<{ courseId: string; assignedCount: number; assignUsers: string[] }> {
-  const employeeIds = Array.from(new Set(input.employeeIds));
-
   return db.transaction(async (tx) => {
     const [existing] = await tx
       .select({
@@ -535,25 +653,47 @@ export async function assignCourse(
 
     const firstChapter = chapters[0];
 
-    const validEmployees = await tx
-      .select({ id: employees.id })
-      .from(employees)
-      .where(
-        and(
-          inArray(employees.id, employeeIds),
-          inArray(employees.status, ['active', 'pending']),
-        ),
+    // Combine any explicitly provided employeeIds with employees belonging to input.stationIds
+    let targetEmployeeIds = Array.from(new Set(input.employeeIds || []));
+    if (input.stationIds && input.stationIds.length > 0) {
+      const stationEmployees = await tx
+        .select({ id: employees.id })
+        .from(employees)
+        .where(
+          and(
+            inArray(employees.status, ['active', 'pending']),
+            sql`${employees.stationIds} && ARRAY[${sql.join(
+              input.stationIds.map((id) => sql`${id}::uuid`),
+              sql`, `,
+            )}]`,
+          ),
+        );
+      targetEmployeeIds = Array.from(
+        new Set([...targetEmployeeIds, ...stationEmployees.map((e) => e.id)]),
       );
-    if (validEmployees.length !== employeeIds.length) {
-      throw new ApiError(
-        'One or more employees are missing, pending or deactivated',
-        400,
-        true,
-        '',
-        {
-          code: 'INVALID_EMPLOYEE_IDS',
-        },
-      );
+    }
+
+    if (targetEmployeeIds.length > 0) {
+      const validEmployees = await tx
+        .select({ id: employees.id })
+        .from(employees)
+        .where(
+          and(
+            inArray(employees.id, targetEmployeeIds),
+            inArray(employees.status, ['active', 'pending']),
+          ),
+        );
+      if (validEmployees.length !== targetEmployeeIds.length) {
+        throw new ApiError(
+          'One or more employees are missing, pending or deactivated',
+          400,
+          true,
+          '',
+          {
+            code: 'INVALID_EMPLOYEE_IDS',
+          },
+        );
+      }
     }
 
     if (input.mode === 'replace') {
@@ -562,37 +702,44 @@ export async function assignCourse(
         .where(
           and(
             eq(trainingCourseAssignments.courseId, courseId),
-            notInArray(trainingCourseAssignments.employeeId, employeeIds),
+            targetEmployeeIds.length > 0
+              ? notInArray(
+                  trainingCourseAssignments.employeeId,
+                  targetEmployeeIds,
+                )
+              : sql`true`,
           ),
         );
+      if (targetEmployeeIds.length > 0) {
+        await tx
+          .insert(trainingCourseAssignments)
+          .values(
+            targetEmployeeIds.map((employeeId) => ({
+              courseId,
+              employeeId,
+              dueDate: input.dueDate,
+              isRequired: input.isRequired ?? false,
+              currentChapterId: firstChapter?.id ?? null,
+            })),
+          )
+          .onConflictDoUpdate({
+            target: [
+              trainingCourseAssignments.courseId,
+              trainingCourseAssignments.employeeId,
+            ],
+            set: {
+              dueDate: input.dueDate,
+              isRequired: input.isRequired ?? false,
+              currentChapterId: firstChapter?.id ?? null,
+              courseCompletedAt: null,
+            },
+          });
+      }
+    } else if (targetEmployeeIds.length > 0) {
       await tx
         .insert(trainingCourseAssignments)
         .values(
-          employeeIds.map((employeeId) => ({
-            courseId,
-            employeeId,
-            dueDate: input.dueDate,
-            isRequired: input.isRequired ?? false,
-            currentChapterId: firstChapter?.id ?? null,
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [
-            trainingCourseAssignments.courseId,
-            trainingCourseAssignments.employeeId,
-          ],
-          set: {
-            dueDate: input.dueDate,
-            isRequired: input.isRequired ?? false,
-            currentChapterId: firstChapter?.id ?? null,
-            courseCompletedAt: null,
-          },
-        });
-    } else {
-      await tx
-        .insert(trainingCourseAssignments)
-        .values(
-          employeeIds.map((employeeId) => ({
+          targetEmployeeIds.map((employeeId) => ({
             courseId,
             employeeId,
             dueDate: input.dueDate,
@@ -611,20 +758,33 @@ export async function assignCourse(
     const current = existing.assignUsers || [];
     const nextUsers =
       input.mode === 'replace'
-        ? employeeIds
-        : Array.from(new Set([...current, ...employeeIds]));
+        ? targetEmployeeIds
+        : Array.from(new Set([...current, ...targetEmployeeIds]));
+
+    const courseUpdates: Record<string, unknown> = {
+      assignUsers: nextUsers,
+      updatedAt: new Date(),
+    };
+    if (input.stationIds !== undefined) {
+      const currentStations = existing.stationIds || [];
+      courseUpdates.stationIds =
+        input.mode === 'replace'
+          ? input.stationIds
+          : Array.from(new Set([...currentStations, ...input.stationIds]));
+    }
+
     await tx
       .update(trainingCourses)
-      .set({ assignUsers: nextUsers, updatedAt: new Date() })
+      .set(courseUpdates)
       .where(eq(trainingCourses.id, courseId));
 
     logger.info(
-      `Course "${existing.titleEn}" (${courseId}) assigned to ${nextUsers.length} employees`,
+      `Course "${existing.titleEn}" (${courseId}) assigned to ${targetEmployeeIds.length} employees`,
     );
 
     return {
       courseId,
-      assignedCount: nextUsers.length,
+      assignedCount: targetEmployeeIds.length,
       assignUsers: nextUsers,
     };
   });

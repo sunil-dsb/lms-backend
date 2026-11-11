@@ -269,6 +269,7 @@ export const assignCourse = catchAsync(
         req.body?.employeeIds ||
         req.body?.userIds ||
         (Array.isArray(req.body) ? req.body : []),
+      stationIds: req.body?.stationIds,
       dueDate: req.body?.dueDate,
       mode: req.body?.mode || 'add',
       isRequired: req.body?.isRequired,
