@@ -31,7 +31,10 @@ export const createLocation = catchAsync(
       });
     const parsed = locationCreateSchema.safeParse(req.body);
     if (!parsed.success) throw parsed.error;
-    const location = await locationsService.createLocation(parsed.data);
+    const location = await locationsService.createLocation(parsed.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(201)
       .json(ApiResponse.success('Location created successfully', { location }));
@@ -54,6 +57,7 @@ export const updateLocation = catchAsync(
     const location = await locationsService.updateLocation(
       param.data.id,
       patch.data,
+      { userId: req.userId, name: req.user?.name },
     );
     res
       .status(200)
@@ -72,7 +76,10 @@ export const deleteLocation = catchAsync(
       throw new ApiError('Invalid location id', 400, true, '', {
         code: 'INVALID_INPUT',
       });
-    await locationsService.deleteLocation(param.data.id);
+    await locationsService.deleteLocation(param.data.id, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(ApiResponse.success('Location deleted successfully', { ok: true }));

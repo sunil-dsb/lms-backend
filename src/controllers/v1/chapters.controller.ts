@@ -94,6 +94,7 @@ export const reorderChapters = catchAsync(
     const chapters = await chaptersService.reorderChapters(
       courseId,
       parsed.data,
+      { userId: req.userId, name: req.user?.name },
     );
 
     res.status(200).json(
@@ -121,6 +122,7 @@ export const deleteChapter = catchAsync(
       chapterId,
       {
         userId: req.userId,
+        name: req.user?.name,
       },
       courseId,
     );

@@ -15,6 +15,8 @@ import {
   getMyTrainingCourse,
   getCourseAssignments,
   getTrainingProgress,
+  grantTrainingOverride,
+  revokeTrainingOverride,
 } from '../../controllers/v1/courses.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
@@ -29,6 +31,18 @@ coursesRoute.get(
   requireAuth,
   requireRoles(['super_admin', 'manager']),
   getTrainingProgress,
+);
+coursesRoute.post(
+  '/admin/override/:employeeId',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  grantTrainingOverride,
+);
+coursesRoute.delete(
+  '/admin/override/:employeeId',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  revokeTrainingOverride,
 );
 coursesRoute.get(
   '/my-training',

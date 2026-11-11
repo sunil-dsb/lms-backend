@@ -7,6 +7,11 @@ import {
 import { db } from '../../db/client.ts';
 import { stations } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
+import {
+  recordAudit,
+  diffChanges,
+  type AuditActor,
+} from '../audit/audit.service.ts';
 
 export interface PublicStation {
   id: string;
@@ -57,6 +62,7 @@ export async function listStations(
 
 export async function createStation(
   input: StationCreateInput,
+  actor: AuditActor,
 ): Promise<PublicStation> {
   const id = crypto.randomUUID();
   await db.insert(stations).values({
@@ -73,12 +79,23 @@ export async function createStation(
       errorCode: 'INTERNAL_ERROR',
     });
   }
+
+  await recordAudit({
+    actor,
+    itemType: 'station',
+    itemId: id,
+    itemName: row.name,
+    action: 'create',
+    changes: { name: { from: null, to: row.name } },
+  });
+
   return publicStation(row);
 }
 
 export async function updateStation(
   id: string,
   patch: StationPatchInput,
+  actor: AuditActor,
 ): Promise<PublicStation> {
   if (Object.keys(patch).length === 0) {
     throw Object.assign(
@@ -107,12 +124,29 @@ export async function updateStation(
       errorCode: 'INTERNAL_ERROR',
     });
   }
+
+  await recordAudit({
+    actor,
+    itemType: 'station',
+    itemId: id,
+    itemName: updated.name,
+    action: 'update',
+    changes: diffChanges(
+      existing as unknown as Record<string, unknown>,
+      updated as unknown as Record<string, unknown>,
+      ['name'],
+    ),
+  });
+
   return publicStation(updated);
 }
 
-export async function deleteStation(id: string): Promise<void> {
+export async function deleteStation(
+  id: string,
+  actor: AuditActor,
+): Promise<void> {
   const [existing] = await db
-    .select({ id: stations.id })
+    .select({ id: stations.id, name: stations.name })
     .from(stations)
     .where(eq(stations.id, id))
     .limit(1);
@@ -122,4 +156,13 @@ export async function deleteStation(id: string): Promise<void> {
     });
   }
   await db.delete(stations).where(eq(stations.id, id));
+
+  await recordAudit({
+    actor,
+    itemType: 'station',
+    itemId: id,
+    itemName: existing.name,
+    action: 'delete',
+    changes: { name: { from: existing.name, to: null } },
+  });
 }

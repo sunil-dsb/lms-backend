@@ -18,11 +18,19 @@ import {
   trainingCourses,
   procedures,
   quiz,
+  type AuditChanges,
+  type EmployeeStatus,
   type Quiz,
+  type TrainingCourseStatus,
   type UnassignCourseInput,
 } from '../../db/index.ts';
 import { logger } from '../../config/logger.ts';
 import { getCourseById, type CourseWithChapters } from './courses.service.ts';
+import {
+  recordAudit,
+  isSameValue,
+  type AuditActor,
+} from '../audit/audit.service.ts';
 
 function blockKinds(blocks: unknown[]): Set<string> {
   return new Set(
@@ -121,42 +129,112 @@ function chapterDisplayData(chapter: CourseWithChapters['chapters'][number]) {
   };
 }
 
+/**
+ * Row shape of the two selects in listEmployeeTraining. The catch-branch
+ * fallback queries an older schema without the override columns, so those
+ * four fields are optional here — the mapper below always writes them out
+ * explicitly (missing key → null), which is why the return shape is stable.
+ */
+type EmployeeTrainingRow = {
+  assignmentId: string;
+  courseId: string;
+  titleEn: string;
+  titleEs: string;
+  purposeEn: string;
+  purposeEs: string;
+  courseStatus: TrainingCourseStatus;
+  isRequired: boolean;
+  dueDate: string;
+  assignedAt: Date;
+  currentChapterId: string | null;
+  courseCompletedAt: Date | null;
+  overrideUntil?: Date | null;
+  overriddenBy?: string | null;
+  overriddenAt?: Date | null;
+  overrideReason?: string | null;
+  currentChapterNumber: number | null;
+  currentChapterTitleEn: string | null;
+  currentChapterTitleEs: string | null;
+};
+
 /** Lists only the authenticated employee's assigned training courses. */
 export async function listEmployeeTraining(employeeId: string) {
-  const assignments = await db
-    .select({
-      assignmentId: trainingCourseAssignments.id,
-      courseId: trainingCourses.id,
-      titleEn: trainingCourses.titleEn,
-      titleEs: trainingCourses.titleEs,
-      purposeEn: trainingCourses.purposeEn,
-      purposeEs: trainingCourses.purposeEs,
-      courseStatus: trainingCourses.status,
-      isRequired: trainingCourseAssignments.isRequired,
-      dueDate: trainingCourseAssignments.dueDate,
-      assignedAt: trainingCourseAssignments.assignedAt,
-      currentChapterId: trainingCourseAssignments.currentChapterId,
-      courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
-      currentChapterNumber: trainingChapters.number,
-      currentChapterTitleEn: trainingChapters.titleEn,
-      currentChapterTitleEs: trainingChapters.titleEs,
-    })
-    .from(trainingCourseAssignments)
-    .innerJoin(
-      trainingCourses,
-      eq(trainingCourseAssignments.courseId, trainingCourses.id),
-    )
-    .leftJoin(
-      trainingChapters,
-      eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
-    )
-    .where(
-      and(
-        eq(trainingCourseAssignments.employeeId, employeeId),
-        eq(trainingCourses.status, 'published'),
-      ),
-    )
-    .orderBy(desc(trainingCourseAssignments.assignedAt));
+  let assignments: EmployeeTrainingRow[];
+  try {
+    assignments = await db
+      .select({
+        assignmentId: trainingCourseAssignments.id,
+        courseId: trainingCourses.id,
+        titleEn: trainingCourses.titleEn,
+        titleEs: trainingCourses.titleEs,
+        purposeEn: trainingCourses.purposeEn,
+        purposeEs: trainingCourses.purposeEs,
+        courseStatus: trainingCourses.status,
+        isRequired: trainingCourseAssignments.isRequired,
+        dueDate: trainingCourseAssignments.dueDate,
+        assignedAt: trainingCourseAssignments.assignedAt,
+        currentChapterId: trainingCourseAssignments.currentChapterId,
+        courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        overrideUntil: trainingCourseAssignments.overrideUntil,
+        overriddenBy: trainingCourseAssignments.overriddenBy,
+        overriddenAt: trainingCourseAssignments.overriddenAt,
+        overrideReason: trainingCourseAssignments.overrideReason,
+        currentChapterNumber: trainingChapters.number,
+        currentChapterTitleEn: trainingChapters.titleEn,
+        currentChapterTitleEs: trainingChapters.titleEs,
+      })
+      .from(trainingCourseAssignments)
+      .innerJoin(
+        trainingCourses,
+        eq(trainingCourseAssignments.courseId, trainingCourses.id),
+      )
+      .leftJoin(
+        trainingChapters,
+        eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
+      )
+      .where(
+        and(
+          eq(trainingCourseAssignments.employeeId, employeeId),
+          eq(trainingCourses.status, 'published'),
+        ),
+      )
+      .orderBy(desc(trainingCourseAssignments.assignedAt));
+  } catch (_err) {
+    assignments = await db
+      .select({
+        assignmentId: trainingCourseAssignments.id,
+        courseId: trainingCourses.id,
+        titleEn: trainingCourses.titleEn,
+        titleEs: trainingCourses.titleEs,
+        purposeEn: trainingCourses.purposeEn,
+        purposeEs: trainingCourses.purposeEs,
+        courseStatus: trainingCourses.status,
+        isRequired: trainingCourseAssignments.isRequired,
+        dueDate: trainingCourseAssignments.dueDate,
+        assignedAt: trainingCourseAssignments.assignedAt,
+        currentChapterId: trainingCourseAssignments.currentChapterId,
+        courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        currentChapterNumber: trainingChapters.number,
+        currentChapterTitleEn: trainingChapters.titleEn,
+        currentChapterTitleEs: trainingChapters.titleEs,
+      })
+      .from(trainingCourseAssignments)
+      .innerJoin(
+        trainingCourses,
+        eq(trainingCourseAssignments.courseId, trainingCourses.id),
+      )
+      .leftJoin(
+        trainingChapters,
+        eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
+      )
+      .where(
+        and(
+          eq(trainingCourseAssignments.employeeId, employeeId),
+          eq(trainingCourses.status, 'published'),
+        ),
+      )
+      .orderBy(desc(trainingCourseAssignments.assignedAt));
+  }
 
   if (assignments.length === 0) return [];
 
@@ -206,6 +284,12 @@ export async function listEmployeeTraining(employeeId: string) {
       status = 'not_started';
     }
 
+    const isOverridden = Boolean(
+      assignment.overrideUntil &&
+      new Date(assignment.overrideUntil) > new Date() &&
+      !completed,
+    );
+
     return {
       ...assignment,
       chapterCount,
@@ -214,6 +298,15 @@ export async function listEmployeeTraining(employeeId: string) {
         ? Math.round((completedChapterCount / chapterCount) * 100)
         : 0,
       status,
+      overrideUntil: assignment.overrideUntil
+        ? assignment.overrideUntil.toISOString()
+        : null,
+      overriddenBy: assignment.overriddenBy ?? null,
+      overriddenAt: assignment.overriddenAt
+        ? assignment.overriddenAt.toISOString()
+        : null,
+      overrideReason: assignment.overrideReason ?? null,
+      isOverridden,
     };
   });
 }
@@ -222,44 +315,113 @@ export interface EmployeeRequiredTrainingStatus {
   requiredCount: number;
   completedCount: number;
   isComplete: boolean;
+  isOverridden: boolean;
+  overrideUntil: string | null;
+  overrideReason: string | null;
 }
 
 /** Required courses are the published, required courses assigned to this employee. */
 export async function getEmployeeRequiredTrainingStatus(
   employeeId: string,
 ): Promise<EmployeeRequiredTrainingStatus> {
-  const requiredAssignments = await db
-    .select({ courseCompletedAt: trainingCourseAssignments.courseCompletedAt })
-    .from(trainingCourseAssignments)
-    .innerJoin(
-      trainingCourses,
-      eq(trainingCourseAssignments.courseId, trainingCourses.id),
-    )
-    .where(
-      and(
-        eq(trainingCourseAssignments.employeeId, employeeId),
-        eq(trainingCourses.status, 'published'),
-        eq(trainingCourseAssignments.isRequired, true),
-      ),
-    );
+  let requiredAssignments: Array<{
+    courseCompletedAt: Date | null;
+    overrideUntil?: Date | null;
+    overrideReason?: string | null;
+  }>;
+
+  try {
+    requiredAssignments = await db
+      .select({
+        courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        overrideUntil: trainingCourseAssignments.overrideUntil,
+        overrideReason: trainingCourseAssignments.overrideReason,
+      })
+      .from(trainingCourseAssignments)
+      .innerJoin(
+        trainingCourses,
+        eq(trainingCourseAssignments.courseId, trainingCourses.id),
+      )
+      .where(
+        and(
+          eq(trainingCourseAssignments.employeeId, employeeId),
+          eq(trainingCourses.status, 'published'),
+          eq(trainingCourseAssignments.isRequired, true),
+        ),
+      );
+  } catch (_err) {
+    const fallback = await db
+      .select({
+        courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+      })
+      .from(trainingCourseAssignments)
+      .innerJoin(
+        trainingCourses,
+        eq(trainingCourseAssignments.courseId, trainingCourses.id),
+      )
+      .where(
+        and(
+          eq(trainingCourseAssignments.employeeId, employeeId),
+          eq(trainingCourses.status, 'published'),
+          eq(trainingCourseAssignments.isRequired, true),
+        ),
+      );
+    requiredAssignments = fallback.map((r) => ({
+      courseCompletedAt: r.courseCompletedAt,
+      overrideUntil: null,
+      overrideReason: null,
+    }));
+  }
 
   const completedCount = requiredAssignments.filter(
     (assignment) => assignment.courseCompletedAt !== null,
   ).length;
 
+  const isComplete =
+    requiredAssignments.length > 0 &&
+    completedCount === requiredAssignments.length;
+
+  const incompleteAssignments = requiredAssignments.filter(
+    (assignment) => assignment.courseCompletedAt === null,
+  );
+
+  const now = new Date();
+  const activeOverrides = incompleteAssignments.filter(
+    (a) => a.overrideUntil && new Date(a.overrideUntil) > now,
+  );
+
+  const isOverridden =
+    !isComplete &&
+    incompleteAssignments.length > 0 &&
+    activeOverrides.length === incompleteAssignments.length;
+
+  const overrideUntil = isOverridden
+    ? (activeOverrides
+        .map((a) => a.overrideUntil!)
+        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0]
+        ?.toISOString() ?? null)
+    : null;
+
+  const overrideReason = isOverridden
+    ? (activeOverrides[0]?.overrideReason ?? null)
+    : null;
+
   return {
     requiredCount: requiredAssignments.length,
     completedCount,
-    isComplete: completedCount === requiredAssignments.length,
+    isComplete,
+    isOverridden,
+    overrideUntil,
+    overrideReason,
   };
 }
 
-/** Blocks nonessential employee content until every required assignment is complete. */
+/** Blocks nonessential employee content until every required assignment is complete, unless an active override exists. */
 export async function assertEmployeeHasCompletedRequiredTraining(
   employeeId: string,
 ): Promise<void> {
   const requiredTraining = await getEmployeeRequiredTrainingStatus(employeeId);
-  if (requiredTraining.isComplete) return;
+  if (requiredTraining.isComplete || requiredTraining.isOverridden) return;
 
   throw new ApiError(
     'Complete required training before opening other LMS sections',
@@ -460,22 +622,15 @@ export async function listAvailableEmployeeTraining(employeeId: string) {
     await syncEmployeeStationCourses(employeeId);
   } catch (err) {
     logger.error(
-      `Failed to auto-sync station courses for employee ${employeeId}:`,
-      err,
+      { err },
+      `Failed to auto-sync station courses for employee ${employeeId}`,
     );
   }
 
   const assignments = await listEmployeeTraining(employeeId);
-  const requiredTraining = {
-    requiredCount: assignments.filter((a) => a.isRequired).length,
-    completedCount: assignments.filter(
-      (a) => a.isRequired && a.courseCompletedAt !== null,
-    ).length,
-    isComplete: false,
-  };
-  requiredTraining.isComplete =
-    requiredTraining.completedCount === requiredTraining.requiredCount;
-  const requiredDone = requiredTraining.isComplete;
+  const requiredTraining = await getEmployeeRequiredTrainingStatus(employeeId);
+  const requiredDone =
+    requiredTraining.isComplete || requiredTraining.isOverridden;
 
   return {
     assignments: assignments.map((assignment) => ({
@@ -524,7 +679,7 @@ export async function assertEmployeeCanAccessTrainingCourse(
   if (!courseAssignment.isRequired) {
     const requiredTraining =
       await getEmployeeRequiredTrainingStatus(employeeId);
-    if (!requiredTraining.isComplete) {
+    if (!requiredTraining.isComplete && !requiredTraining.isOverridden) {
       throw new ApiError(
         'Complete required training before opening other courses',
         403,
@@ -638,6 +793,7 @@ export async function assignCourse(
     isRequired?: boolean | undefined;
     mode?: 'add' | 'replace' | undefined;
   },
+  actor: AuditActor,
 ): Promise<{ courseId: string; assignedCount: number; assignUsers: string[] }> {
   return db.transaction(async (tx) => {
     const [existing] = await tx
@@ -645,6 +801,7 @@ export async function assignCourse(
         id: trainingCourses.id,
         titleEn: trainingCourses.titleEn,
         assignUsers: trainingCourses.assignUsers,
+        stationIds: trainingCourses.stationIds,
       })
       .from(trainingCourses)
       .where(eq(trainingCourses.id, courseId))
@@ -832,6 +989,24 @@ export async function assignCourse(
       `Course "${existing.titleEn}" (${courseId}) assigned to ${targetEmployeeIds.length} employees`,
     );
 
+    await recordAudit({
+      actor,
+      executor: tx,
+      itemType: 'assignment',
+      itemId: courseId,
+      itemName: existing.titleEn,
+      action: 'assign',
+      changes: {
+        employees: {
+          from: null,
+          to: targetEmployeeIds,
+        },
+        dueDate: { from: null, to: input.dueDate },
+        isRequired: { from: null, to: input.isRequired ?? false },
+        mode: { from: null, to: input.mode ?? 'add' },
+      },
+    });
+
     return {
       courseId,
       assignedCount: targetEmployeeIds.length,
@@ -846,6 +1021,7 @@ export async function assignCourse(
 export async function unassignCourse(
   courseId: string,
   input: UnassignCourseInput,
+  actor: AuditActor,
 ): Promise<{
   courseId: string;
   unassignedCount: number;
@@ -859,6 +1035,7 @@ export async function unassignCourse(
         id: trainingCourses.id,
         titleEn: trainingCourses.titleEn,
         assignUsers: trainingCourses.assignUsers,
+        stationIds: trainingCourses.stationIds,
       })
       .from(trainingCourses)
       .where(eq(trainingCourses.id, courseId))
@@ -902,6 +1079,22 @@ export async function unassignCourse(
       `Course "${existing.titleEn}" (${courseId}) unassigned from ${employeeIds.length} employees`,
     );
 
+    await recordAudit({
+      actor,
+      executor: tx,
+      itemType: 'assignment',
+      itemId: courseId,
+      itemName: existing.titleEn,
+      action: 'unassign',
+      changes: {
+        employees: { from: employeeIds, to: null },
+        remainingCount: {
+          from: (existing.assignUsers || []).length,
+          to: nextUsers.length,
+        },
+      },
+    });
+
     return {
       courseId,
       unassignedCount: employeeIds.length,
@@ -909,6 +1102,32 @@ export async function unassignCourse(
     };
   });
 }
+
+/**
+ * Row shape of the two selects in listCourseAssignments. The catch-branch
+ * fallback queries an older schema without the override columns, so those
+ * four fields are optional here (the mapper reads them with `?? null`).
+ */
+type CourseAssignmentRow = {
+  id: string;
+  courseId: string;
+  employeeId: string;
+  isRequired: boolean;
+  dueDate: string;
+  currentChapterId: string | null;
+  courseCompletedAt: Date | null;
+  assignedAt: Date;
+  currentChapterNumber: number | null;
+  currentChapterTitleEn: string | null;
+  currentChapterTitleEs: string | null;
+  employeeName: string;
+  employeeEmail: string;
+  employeeStatus: EmployeeStatus;
+  overrideUntil?: Date | null;
+  overriddenBy?: string | null;
+  overriddenAt?: Date | null;
+  overrideReason?: string | null;
+};
 
 /**
  * Returns all assigned employees for a training course.
@@ -927,34 +1146,70 @@ export async function listCourseAssignments(courseId: string) {
   }
 
   const todayStart = new Date().setHours(0, 0, 0, 0);
-  const rows = await db
-    .select({
-      id: trainingCourseAssignments.id,
-      courseId: trainingCourseAssignments.courseId,
-      employeeId: trainingCourseAssignments.employeeId,
-      isRequired: trainingCourseAssignments.isRequired,
-      dueDate: trainingCourseAssignments.dueDate,
-      currentChapterId: trainingCourseAssignments.currentChapterId,
-      courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
-      assignedAt: trainingCourseAssignments.assignedAt,
-      currentChapterNumber: trainingChapters.number,
-      currentChapterTitleEn: trainingChapters.titleEn,
-      currentChapterTitleEs: trainingChapters.titleEs,
-      employeeName: employees.name,
-      employeeEmail: employees.email,
-      employeeStatus: employees.status,
-    })
-    .from(trainingCourseAssignments)
-    .innerJoin(
-      employees,
-      eq(trainingCourseAssignments.employeeId, employees.id),
-    )
-    .leftJoin(
-      trainingChapters,
-      eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
-    )
-    .where(eq(trainingCourseAssignments.courseId, courseId))
-    .orderBy(desc(trainingCourseAssignments.assignedAt));
+  let rows: CourseAssignmentRow[];
+  try {
+    rows = await db
+      .select({
+        id: trainingCourseAssignments.id,
+        courseId: trainingCourseAssignments.courseId,
+        employeeId: trainingCourseAssignments.employeeId,
+        isRequired: trainingCourseAssignments.isRequired,
+        dueDate: trainingCourseAssignments.dueDate,
+        currentChapterId: trainingCourseAssignments.currentChapterId,
+        courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        overrideUntil: trainingCourseAssignments.overrideUntil,
+        overriddenBy: trainingCourseAssignments.overriddenBy,
+        overriddenAt: trainingCourseAssignments.overriddenAt,
+        overrideReason: trainingCourseAssignments.overrideReason,
+        assignedAt: trainingCourseAssignments.assignedAt,
+        currentChapterNumber: trainingChapters.number,
+        currentChapterTitleEn: trainingChapters.titleEn,
+        currentChapterTitleEs: trainingChapters.titleEs,
+        employeeName: employees.name,
+        employeeEmail: employees.email,
+        employeeStatus: employees.status,
+      })
+      .from(trainingCourseAssignments)
+      .innerJoin(
+        employees,
+        eq(trainingCourseAssignments.employeeId, employees.id),
+      )
+      .leftJoin(
+        trainingChapters,
+        eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
+      )
+      .where(eq(trainingCourseAssignments.courseId, courseId))
+      .orderBy(desc(trainingCourseAssignments.assignedAt));
+  } catch (_err) {
+    rows = await db
+      .select({
+        id: trainingCourseAssignments.id,
+        courseId: trainingCourseAssignments.courseId,
+        employeeId: trainingCourseAssignments.employeeId,
+        isRequired: trainingCourseAssignments.isRequired,
+        dueDate: trainingCourseAssignments.dueDate,
+        currentChapterId: trainingCourseAssignments.currentChapterId,
+        courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        assignedAt: trainingCourseAssignments.assignedAt,
+        currentChapterNumber: trainingChapters.number,
+        currentChapterTitleEn: trainingChapters.titleEn,
+        currentChapterTitleEs: trainingChapters.titleEs,
+        employeeName: employees.name,
+        employeeEmail: employees.email,
+        employeeStatus: employees.status,
+      })
+      .from(trainingCourseAssignments)
+      .innerJoin(
+        employees,
+        eq(trainingCourseAssignments.employeeId, employees.id),
+      )
+      .leftJoin(
+        trainingChapters,
+        eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
+      )
+      .where(eq(trainingCourseAssignments.courseId, courseId))
+      .orderBy(desc(trainingCourseAssignments.assignedAt));
+  }
 
   const [chapterCountRow] = await db
     .select({ chapterCount: count() })
@@ -991,6 +1246,10 @@ export async function listCourseAssignments(courseId: string) {
       status = 'not_started';
     }
 
+    const isOverridden = Boolean(
+      r.overrideUntil && new Date(r.overrideUntil) > new Date() && !isCompleted,
+    );
+
     return {
       id: r.id,
       courseId: r.courseId,
@@ -1006,6 +1265,11 @@ export async function listCourseAssignments(courseId: string) {
       courseCompletedAt: r.courseCompletedAt
         ? r.courseCompletedAt.toISOString()
         : null,
+      overrideUntil: r.overrideUntil ? r.overrideUntil.toISOString() : null,
+      overriddenBy: r.overriddenBy ?? null,
+      overriddenAt: r.overriddenAt ? r.overriddenAt.toISOString() : null,
+      overrideReason: r.overrideReason ?? null,
+      isOverridden,
       chapterCount,
       completedChapterCount,
       progressPercent: chapterCount
@@ -1020,4 +1284,218 @@ export async function listCourseAssignments(courseId: string) {
       },
     };
   });
+}
+
+/**
+ * Distinct values of one override field across the rows an UPDATE touched.
+ * Granting without a courseId hits every required course of the employee and
+ * those rows can disagree: one distinct value stays a scalar, several become
+ * a list so the entry shows what each row said instead of picking a winner.
+ */
+function distinctOverrideValues<T extends Date | string | null>(
+  values: T[],
+): T | T[] | null {
+  const uniq = new Map<string, T>();
+  for (const v of values) {
+    if (v !== undefined) uniq.set(JSON.stringify(v), v);
+  }
+  const nonNull = [...uniq.values()].filter(
+    (v): v is NonNullable<T> => v !== null,
+  );
+  if (nonNull.length === 1) return nonNull[0] ?? null;
+  if (nonNull.length > 1) return nonNull;
+  return null;
+}
+
+/**
+ * Writes the override audit entry for both grant and revoke: item name is
+ * `Employee · Course` (or the scope label when no single course is targeted),
+ * changes are the override fields read off the rows before the UPDATE ran.
+ * Never throws — recordAudit swallows its own failures.
+ */
+async function recordOverrideAudit(input: {
+  actor: AuditActor;
+  employeeId: string;
+  courseId?: string | undefined;
+  /** What follows the employee name when no single course is targeted. */
+  scopeLabel: string;
+  /** The rows the UPDATE touched, snapshotted before it ran. */
+  before: Array<{
+    overrideUntil: Date | null;
+    overrideReason: string | null;
+  }>;
+  to: { overrideUntil: Date | null; reason: string | null };
+}): Promise<void> {
+  const [employee] = await db
+    .select({ name: employees.name })
+    .from(employees)
+    .where(eq(employees.id, input.employeeId))
+    .limit(1);
+
+  let scope = input.scopeLabel;
+  if (input.courseId) {
+    const [course] = await db
+      .select({ titleEn: trainingCourses.titleEn })
+      .from(trainingCourses)
+      .where(eq(trainingCourses.id, input.courseId))
+      .limit(1);
+    scope = course?.titleEn ?? input.courseId;
+  }
+
+  const changes: AuditChanges = {};
+  // No rows matched: the attempt still deserves a row, just without
+  // before/after values that would claim fields moved when none did.
+  if (input.before.length > 0) {
+    const fromUntil = distinctOverrideValues(
+      input.before.map((r) => r.overrideUntil),
+    );
+    const fromReason = distinctOverrideValues(
+      input.before.map((r) => r.overrideReason),
+    );
+    if (!isSameValue(fromUntil, input.to.overrideUntil)) {
+      changes.overrideUntil = { from: fromUntil, to: input.to.overrideUntil };
+    }
+    if (!isSameValue(fromReason, input.to.reason)) {
+      changes.reason = { from: fromReason, to: input.to.reason };
+    }
+  }
+
+  const isRevoke = input.to.overrideUntil === null && input.to.reason === null;
+
+  await recordAudit({
+    actor: input.actor,
+    itemType: 'assignment',
+    itemId: input.employeeId,
+    itemName: `${employee?.name ?? input.employeeId} · ${scope}`,
+    action: isRevoke ? 'revoke_override' : 'override',
+    changes: Object.keys(changes).length > 0 ? changes : null,
+  });
+}
+
+/**
+ * Grants a temporary training override to unblock LMS access without marking the course complete.
+ */
+export async function grantTrainingOverride(params: {
+  employeeId: string;
+  courseId?: string | undefined;
+  managerId: string;
+  overrideUntil: string;
+  reason?: string | undefined;
+  actor: AuditActor;
+}) {
+  const untilDate = new Date(params.overrideUntil);
+  if (isNaN(untilDate.getTime()) || untilDate <= new Date()) {
+    throw new ApiError('overrideUntil must be a valid future date/time', 400);
+  }
+
+  const conditions = [
+    eq(trainingCourseAssignments.employeeId, params.employeeId),
+  ];
+  if (params.courseId) {
+    conditions.push(eq(trainingCourseAssignments.courseId, params.courseId));
+  } else {
+    conditions.push(eq(trainingCourseAssignments.isRequired, true));
+  }
+
+  let managerUuid: string | null = null;
+  if (params.managerId) {
+    if (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        params.managerId,
+      )
+    ) {
+      managerUuid = params.managerId;
+    } else {
+      const [emp] = await db
+        .select({ id: employees.id })
+        .from(employees)
+        .where(eq(employees.userId, params.managerId))
+        .limit(1);
+      if (emp?.id) {
+        managerUuid = emp.id;
+      }
+    }
+  }
+
+  // Snapshot the rows the UPDATE will touch — the audit entry's "from".
+  const beforeRows = await db
+    .select({
+      overrideUntil: trainingCourseAssignments.overrideUntil,
+      overrideReason: trainingCourseAssignments.overrideReason,
+    })
+    .from(trainingCourseAssignments)
+    .where(and(...conditions));
+
+  await db
+    .update(trainingCourseAssignments)
+    .set({
+      overrideUntil: untilDate,
+      overriddenBy: managerUuid,
+      overriddenAt: new Date(),
+      overrideReason: params.reason || null,
+    })
+    .where(and(...conditions));
+
+  await recordOverrideAudit({
+    actor: params.actor,
+    employeeId: params.employeeId,
+    courseId: params.courseId,
+    scopeLabel: 'all required training',
+    before: beforeRows,
+    to: { overrideUntil: untilDate, reason: params.reason || null },
+  });
+
+  return {
+    success: true,
+    overrideUntil: untilDate.toISOString(),
+    overriddenBy: managerUuid,
+    reason: params.reason || null,
+  };
+}
+
+/**
+ * Revokes an active temporary training override.
+ */
+export async function revokeTrainingOverride(params: {
+  employeeId: string;
+  courseId?: string | undefined;
+  actor: AuditActor;
+}) {
+  const conditions = [
+    eq(trainingCourseAssignments.employeeId, params.employeeId),
+  ];
+  if (params.courseId) {
+    conditions.push(eq(trainingCourseAssignments.courseId, params.courseId));
+  }
+
+  // Snapshot before the clear — without a courseId this wipes every
+  // assignment row of the employee, which can be many.
+  const beforeRows = await db
+    .select({
+      overrideUntil: trainingCourseAssignments.overrideUntil,
+      overrideReason: trainingCourseAssignments.overrideReason,
+    })
+    .from(trainingCourseAssignments)
+    .where(and(...conditions));
+
+  await db
+    .update(trainingCourseAssignments)
+    .set({
+      overrideUntil: null,
+      overriddenBy: null,
+      overriddenAt: null,
+      overrideReason: null,
+    })
+    .where(and(...conditions));
+
+  await recordOverrideAudit({
+    actor: params.actor,
+    employeeId: params.employeeId,
+    courseId: params.courseId,
+    scopeLabel: 'all courses',
+    before: beforeRows,
+    to: { overrideUntil: null, reason: null },
+  });
+
+  return { success: true };
 }

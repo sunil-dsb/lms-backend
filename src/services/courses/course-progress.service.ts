@@ -51,7 +51,7 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
   if (!assignment.isRequired) {
     const requiredTraining =
       await getEmployeeRequiredTrainingStatus(employeeId);
-    if (!requiredTraining.isComplete) {
+    if (!requiredTraining.isComplete && !requiredTraining.isOverridden) {
       throw new ApiError(
         'Complete required training before opening other courses',
         403,
@@ -101,29 +101,9 @@ export async function completeCurrentChapter(
       });
     }
     if (!assignment.isRequired) {
-      const requiredAssignments = await tx
-        .select({
-          courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
-        })
-        .from(trainingCourseAssignments)
-        .innerJoin(
-          trainingCourses,
-          eq(trainingCourseAssignments.courseId, trainingCourses.id),
-        )
-        .where(
-          and(
-            eq(trainingCourseAssignments.employeeId, employeeId),
-            eq(trainingCourses.status, 'published'),
-            eq(trainingCourseAssignments.isRequired, true),
-          ),
-        );
-      const requiredTraining = {
-        requiredCount: requiredAssignments.length,
-        completedCount: requiredAssignments.filter(
-          (item) => item.courseCompletedAt !== null,
-        ).length,
-      };
-      if (requiredTraining.requiredCount !== requiredTraining.completedCount) {
+      const requiredTraining =
+        await getEmployeeRequiredTrainingStatus(employeeId);
+      if (!requiredTraining.isComplete && !requiredTraining.isOverridden) {
         throw new ApiError(
           'Complete required training before opening other courses',
           403,
@@ -131,10 +111,7 @@ export async function completeCurrentChapter(
           '',
           {
             code: 'COURSE_LOCKED_BY_REQUIRED_TRAINING',
-            details: {
-              ...requiredTraining,
-              isComplete: false,
-            },
+            details: requiredTraining,
           },
         );
       }
@@ -497,7 +474,7 @@ export async function getTrainingProgress(
     | undefined;
   if (options.groupBy) {
     const page = options.page ?? 1;
-    const limit = options.limit ?? 25;
+    const limit = options.limit ?? 10;
     const rows =
       options.groupBy === 'employee' ? filteredEmployees : filteredCourses;
     const totalPages = Math.ceil(rows.length / limit);

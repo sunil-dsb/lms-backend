@@ -31,7 +31,10 @@ export const createStation = catchAsync(
       });
     const parsed = stationCreateSchema.safeParse(req.body);
     if (!parsed.success) throw parsed.error;
-    const station = await stationsService.createStation({ ...parsed.data });
+    const station = await stationsService.createStation(
+      { ...parsed.data },
+      { userId: req.userId, name: req.user?.name },
+    );
     res
       .status(201)
       .json(ApiResponse.success('Station created successfully', { station }));
@@ -54,6 +57,7 @@ export const updateStation = catchAsync(
     const station = await stationsService.updateStation(
       param.data.id,
       patch.data,
+      { userId: req.userId, name: req.user?.name },
     );
     res
       .status(200)
@@ -72,7 +76,10 @@ export const deleteStation = catchAsync(
       throw new ApiError('Invalid station id', 400, true, '', {
         code: 'INVALID_INPUT',
       });
-    await stationsService.deleteStation(param.data.id);
+    await stationsService.deleteStation(param.data.id, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(ApiResponse.success('Station deleted successfully', { ok: true }));

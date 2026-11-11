@@ -42,6 +42,7 @@ export const createProcedure = catchAsync(
     const procedure = await proceduresService.createProcedure(parsed.data, {
       employeeId: '',
       userId: req.userId,
+      name: req.user?.name,
     });
     res
       .status(201)
@@ -66,7 +67,10 @@ export const updateProcedure = catchAsync(
       throw parsed.error;
     }
 
-    const procedure = await proceduresService.updateProcedure(id, parsed.data);
+    const procedure = await proceduresService.updateProcedure(id, parsed.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(
@@ -302,7 +306,10 @@ export const publishProcedure = catchAsync(
       });
     }
 
-    const procedure = await proceduresService.publishProcedure(id);
+    const procedure = await proceduresService.publishProcedure(id, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(
@@ -325,7 +332,10 @@ export const updateProcedureStations = catchAsync(
     const ids =
       parsed.data.stationIds ??
       (parsed.data.stationId ? [parsed.data.stationId] : null);
-    const procedure = await proceduresService.updateProcedureStations(id, ids);
+    const procedure = await proceduresService.updateProcedureStations(id, ids, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res.status(200).json(
       ApiResponse.success('Procedure station updated successfully', {
         procedure,
@@ -344,7 +354,10 @@ export const archiveProcedure = catchAsync(
       });
     }
 
-    const procedure = await proceduresService.archiveProcedure(id);
+    const procedure = await proceduresService.archiveProcedure(id, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(
@@ -363,7 +376,10 @@ export const unarchiveProcedure = catchAsync(
       });
     }
 
-    const procedure = await proceduresService.unarchiveProcedure(id);
+    const procedure = await proceduresService.unarchiveProcedure(id, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(
@@ -389,7 +405,10 @@ export const deleteProcedure = catchAsync(
       });
     }
 
-    await proceduresService.deleteProcedure(param.data.id);
+    await proceduresService.deleteProcedure(param.data.id, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(
@@ -431,6 +450,7 @@ export const importProcedure = catchAsync(
       {
         employeeId: '',
         userId: req.userId,
+        name: req.user?.name,
       },
     );
 

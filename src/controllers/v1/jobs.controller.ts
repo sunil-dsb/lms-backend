@@ -68,7 +68,10 @@ export const createJob = catchAsync(
       });
     const parsed = jobCreateSchema.safeParse(req.body);
     if (!parsed.success) throw parsed.error;
-    const job = await jobsService.createJob(parsed.data);
+    const job = await jobsService.createJob(parsed.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(201)
       .json(ApiResponse.success('Job created successfully', { job }));
@@ -88,7 +91,10 @@ export const updateJob = catchAsync(
       });
     const patch = jobPatchSchema.safeParse(req.body);
     if (!patch.success) throw patch.error;
-    const job = await jobsService.updateJob(param.data.id, patch.data);
+    const job = await jobsService.updateJob(param.data.id, patch.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(ApiResponse.success('Job updated successfully', { job }));
@@ -106,7 +112,10 @@ export const deleteJob = catchAsync(
       throw new ApiError('Invalid job id', 400, true, '', {
         code: 'INVALID_INPUT',
       });
-    await jobsService.deleteJob(param.data.id);
+    await jobsService.deleteJob(param.data.id, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(ApiResponse.success('Job deleted successfully', { ok: true }));

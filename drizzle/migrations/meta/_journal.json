@@ -78,6 +78,13 @@
       "when": 1793880693014,
       "tag": "0010_normal_white_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794390665703,
+      "tag": "0011_silent_loki",
+      "breakpoints": true
     }
   ]
 }
