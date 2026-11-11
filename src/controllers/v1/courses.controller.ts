@@ -410,7 +410,13 @@ export const getCourseAssignments = catchAsync(
 export const getTrainingProgress = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const rawStatus = req.query.status;
-    const validStatuses = ['complete', 'in_progress', 'overdue'] as const;
+    const validStatuses = [
+      'complete',
+      'in_progress',
+      'overdue',
+      'not_started',
+      'due_soon',
+    ] as const;
     if (
       rawStatus !== undefined &&
       (typeof rawStatus !== 'string' ||

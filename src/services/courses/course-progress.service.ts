@@ -210,7 +210,7 @@ export async function completeCurrentChapter(
  * Aggregated training progress for Admin Progress tab (`/admin/training/progress`).
  */
 export interface TrainingProgressOptions {
-  status?: 'complete' | 'in_progress' | 'overdue';
+  status?: 'complete' | 'in_progress' | 'overdue' | 'not_started' | 'due_soon';
   groupBy?: 'employee' | 'course';
   page?: number;
   limit?: number;
@@ -259,6 +259,8 @@ export async function getTrainingProgress(
   let completed = 0;
   let inProgress = 0;
   let overdue = 0;
+  let notStarted = 0;
+  let dueSoon = 0;
 
   const employeeMap = new Map<
     string,
@@ -274,6 +276,8 @@ export async function getTrainingProgress(
         currentChapter: number | null;
         isComplete: boolean;
         isOverdue: boolean;
+        isDueSoon: boolean;
+        isStarted: boolean;
         courseCompletedAt: string | null;
       }>;
     }
@@ -287,19 +291,33 @@ export async function getTrainingProgress(
       peopleTotal: number;
       currentChapter: number | null;
       hasOverdue: boolean;
+      hasDueSoon: boolean;
+      hasStarted: boolean;
     }
   >();
 
   for (const r of rows) {
     const isComplete = r.courseCompletedAt !== null;
-    const isOverdue = !isComplete && new Date(r.dueDate).getTime() < todayStart;
+    const dueDateObj = new Date(r.dueDate);
+    dueDateObj.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil(
+      (dueDateObj.getTime() - todayStart) / (1000 * 60 * 60 * 24),
+    );
+    const isOverdue = !isComplete && dueDateObj.getTime() < todayStart;
+    const isDueSoon =
+      !isComplete && !isOverdue && diffDays >= 0 && diffDays <= 3;
+    const isStarted = !isComplete && (r.currentChapterNumber ?? 1) > 1;
 
     if (isComplete) {
       completed++;
     } else if (isOverdue) {
       overdue++;
-    } else {
+    } else if (isDueSoon) {
+      dueSoon++;
+    } else if (isStarted) {
       inProgress++;
+    } else {
+      notStarted++;
     }
 
     let empEntry = employeeMap.get(r.employeeId);
@@ -329,6 +347,8 @@ export async function getTrainingProgress(
       currentChapter: r.currentChapterNumber,
       isComplete,
       isOverdue,
+      isDueSoon,
+      isStarted,
       courseCompletedAt: r.courseCompletedAt
         ? r.courseCompletedAt.toISOString()
         : null,
@@ -346,6 +366,8 @@ export async function getTrainingProgress(
         peopleTotal: 0,
         currentChapter: null,
         hasOverdue: false,
+        hasDueSoon: false,
+        hasStarted: false,
       };
       courseMap.set(r.courseId, courseEntry);
     }
@@ -360,6 +382,8 @@ export async function getTrainingProgress(
             : Math.min(courseEntry.currentChapter, r.currentChapterNumber);
       }
       if (isOverdue) courseEntry.hasOverdue = true;
+      if (isDueSoon) courseEntry.hasDueSoon = true;
+      if (isStarted) courseEntry.hasStarted = true;
     }
   }
 
@@ -372,14 +396,22 @@ export async function getTrainingProgress(
 
     const current = unfinished[0] || null;
     const hasOverdue = emp.assignments.some((a) => a.isOverdue);
+    const hasDueSoon = emp.assignments.some((a) => a.isDueSoon);
+    const hasStarted = emp.assignments.some((a) => a.isStarted);
     const allDone =
       emp.coursesTotal > 0 && emp.coursesDone === emp.coursesTotal;
 
-    const status: 'complete' | 'in_progress' | 'overdue' = allDone
-      ? 'complete'
-      : hasOverdue
-        ? 'overdue'
-        : 'in_progress';
+    const status:
+      'complete' | 'in_progress' | 'overdue' | 'not_started' | 'due_soon' =
+      allDone
+        ? 'complete'
+        : hasOverdue
+          ? 'overdue'
+          : hasDueSoon
+            ? 'due_soon'
+            : hasStarted
+              ? 'in_progress'
+              : 'not_started';
 
     return {
       employeeId: emp.employeeId,
@@ -402,6 +434,8 @@ export async function getTrainingProgress(
               dueDate: assignment.dueDate,
               isComplete: assignment.isComplete,
               isOverdue: assignment.isOverdue,
+              isDueSoon: assignment.isDueSoon,
+              isStarted: assignment.isStarted,
               courseCompletedAt: assignment.courseCompletedAt,
             })),
           }
@@ -411,11 +445,17 @@ export async function getTrainingProgress(
 
   const coursesList = Array.from(courseMap.values()).map((c) => {
     const allDone = c.peopleTotal > 0 && c.peopleDone === c.peopleTotal;
-    const status: 'complete' | 'in_progress' | 'overdue' = allDone
-      ? 'complete'
-      : c.hasOverdue
-        ? 'overdue'
-        : 'in_progress';
+    const status:
+      'complete' | 'in_progress' | 'overdue' | 'not_started' | 'due_soon' =
+      allDone
+        ? 'complete'
+        : c.hasOverdue
+          ? 'overdue'
+          : c.hasDueSoon
+            ? 'due_soon'
+            : c.hasStarted
+              ? 'in_progress'
+              : 'not_started';
 
     return {
       course: c.course,
@@ -483,6 +523,8 @@ export async function getTrainingProgress(
       completed,
       inProgress,
       overdue,
+      notStarted,
+      dueSoon,
     },
     counts,
     employees: filteredEmployees,

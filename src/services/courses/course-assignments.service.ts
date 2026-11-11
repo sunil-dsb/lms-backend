@@ -174,12 +174,38 @@ export async function listEmployeeTraining(employeeId: string) {
     chapterCounts.map((row) => [row.courseId, Number(row.chapterCount)]),
   );
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
   return assignments.map((assignment) => {
     const chapterCount = countsByCourse.get(assignment.courseId) ?? 0;
     const completed = Boolean(assignment.courseCompletedAt);
     const completedChapterCount = completed
       ? chapterCount
       : Math.max((assignment.currentChapterNumber ?? 1) - 1, 0);
+
+    const dueDateObj = new Date(assignment.dueDate);
+    dueDateObj.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil(
+      (dueDateObj.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+    );
+
+    let status:
+      'complete' | 'overdue' | 'due_soon' | 'in_progress' | 'not_started';
+
+    if (completed) {
+      status = 'complete';
+    } else if (assignment.dueDate < todayStr) {
+      status = 'overdue';
+    } else if (diffDays >= 0 && diffDays <= 3) {
+      status = 'due_soon';
+    } else if (completedChapterCount > 0) {
+      status = 'in_progress';
+    } else {
+      status = 'not_started';
+    }
+
     return {
       ...assignment,
       chapterCount,
@@ -187,7 +213,7 @@ export async function listEmployeeTraining(employeeId: string) {
       progressPercent: chapterCount
         ? Math.round((completedChapterCount / chapterCount) * 100)
         : 0,
-      status: completed ? 'complete' : 'in_progress',
+      status,
     };
   });
 }
@@ -551,6 +577,30 @@ export async function getEmployeeTrainingCourse(
     ? chapters.length
     : Math.max(currentIndex, 0);
 
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const dueDateObj = new Date(assignment.dueDate);
+  dueDateObj.setHours(0, 0, 0, 0);
+  const diffDays = Math.ceil(
+    (dueDateObj.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  let detailStatus:
+    'complete' | 'overdue' | 'due_soon' | 'in_progress' | 'not_started';
+
+  if (assignment.courseCompletedAt) {
+    detailStatus = 'complete';
+  } else if (assignment.dueDate < todayStr) {
+    detailStatus = 'overdue';
+  } else if (diffDays >= 0 && diffDays <= 3) {
+    detailStatus = 'due_soon';
+  } else if (completedChapterCount > 0) {
+    detailStatus = 'in_progress';
+  } else {
+    detailStatus = 'not_started';
+  }
+
   return {
     assignment: {
       id: assignment.id,
@@ -563,7 +613,7 @@ export async function getEmployeeTrainingCourse(
       progressPercent: chapters.length
         ? Math.round((completedChapterCount / chapters.length) * 100)
         : 0,
-      status: assignment.courseCompletedAt ? 'complete' : 'in_progress',
+      status: detailStatus,
     },
     course: {
       id: course.id,
@@ -914,16 +964,32 @@ export async function listCourseAssignments(courseId: string) {
 
   return rows.map((r) => {
     const isCompleted = r.courseCompletedAt !== null;
-    const isOverdue =
-      !isCompleted && new Date(r.dueDate).getTime() < todayStart;
-    const status = isCompleted
-      ? 'complete'
-      : isOverdue
-        ? 'overdue'
-        : 'in_progress';
+    const dueDateObj = new Date(r.dueDate);
+    dueDateObj.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil(
+      (dueDateObj.getTime() - todayStart) / (1000 * 60 * 60 * 24),
+    );
+    const isOverdue = !isCompleted && dueDateObj.getTime() < todayStart;
+    const isDueSoon =
+      !isCompleted && !isOverdue && diffDays >= 0 && diffDays <= 3;
     const completedChapterCount = isCompleted
       ? chapterCount
       : Math.max((r.currentChapterNumber ?? 1) - 1, 0);
+
+    let status:
+      'complete' | 'overdue' | 'due_soon' | 'in_progress' | 'not_started';
+
+    if (isCompleted) {
+      status = 'complete';
+    } else if (isOverdue) {
+      status = 'overdue';
+    } else if (isDueSoon) {
+      status = 'due_soon';
+    } else if (completedChapterCount > 0) {
+      status = 'in_progress';
+    } else {
+      status = 'not_started';
+    }
 
     return {
       id: r.id,
