@@ -6,7 +6,7 @@ import {
   type PaginatedResult,
 } from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
-import { quiz, procedures } from '../../db/index.ts';
+import { quiz, procedures, type AuditChanges } from '../../db/index.ts';
 import {
   type CreateQuizInput,
   createQuizInputSchema,
@@ -16,6 +16,13 @@ import {
   type QuizWithProcedure,
   type QuizProcedureSummary,
 } from '../../db/quiz.schema.ts';
+import {
+  recordAudit,
+  diffChanges,
+  isSameValue,
+  summarizeQuestions,
+  type AuditActor,
+} from '../audit/audit.service.ts';
 
 async function getProcedureForQuiz(
   quizId: string,
@@ -37,7 +44,7 @@ async function getProcedureForQuiz(
 
 export async function createQuiz(
   input: CreateQuizInput,
-  actor: { userId?: string | undefined },
+  actor: AuditActor,
 ): Promise<QuizWithProcedure> {
   // Validate questions schema properly
   const parsed = createQuizInputSchema.parse(input);
@@ -71,6 +78,18 @@ export async function createQuiz(
       errorCode: 'INTERNAL_ERROR',
     });
   }
+
+  await recordAudit({
+    actor,
+    itemType: 'quiz',
+    itemId: id,
+    itemName: created.nameEn,
+    action: 'create',
+    changes: {
+      name: { from: null, to: created.nameEn },
+      quizType: { from: null, to: created.quizType },
+    },
+  });
 
   const proc = await getProcedureForQuiz(id);
 
@@ -143,6 +162,7 @@ export async function listQuizzes(
 export async function updateQuiz(
   id: string,
   input: UpdateQuizInput,
+  actor: AuditActor,
 ): Promise<QuizWithProcedure> {
   const parsed = updateQuizInputSchema.parse(input);
 
@@ -201,6 +221,28 @@ export async function updateQuiz(
     });
   }
 
+  // Same rule as course updates: a save that moved nothing leaves no row.
+  // Questions are diffed as summarized label lists — the raw JSON is the
+  // whole quiz document, and a count would miss choice/answer edits.
+  const changes: AuditChanges = {
+    ...(diffChanges(existing, updated, ['nameEn', 'nameEs', 'quizType']) ?? {}),
+  };
+  const beforeQuestions = summarizeQuestions(existing.questions);
+  const afterQuestions = summarizeQuestions(updated.questions);
+  if (!isSameValue(beforeQuestions, afterQuestions)) {
+    changes.questions = { from: beforeQuestions, to: afterQuestions };
+  }
+  if (Object.keys(changes).length > 0) {
+    await recordAudit({
+      actor,
+      itemType: 'quiz',
+      itemId: id,
+      itemName: updated.nameEn,
+      action: 'update',
+      changes,
+    });
+  }
+
   const proc = await getProcedureForQuiz(id);
 
   return {
@@ -210,7 +252,19 @@ export async function updateQuiz(
   };
 }
 
-export async function deleteQuiz(id: string): Promise<void> {
+export async function deleteQuiz(id: string, actor: AuditActor): Promise<void> {
+  const [existing] = await db
+    .select()
+    .from(quiz)
+    .where(eq(quiz.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Quiz not found', 404), {
+      errorCode: 'QUIZ_NOT_FOUND',
+    });
+  }
+
   // Unlink quiz from any procedures referencing it
   await db
     .update(procedures)
@@ -227,4 +281,13 @@ export async function deleteQuiz(id: string): Promise<void> {
       errorCode: 'QUIZ_NOT_FOUND',
     });
   }
+
+  await recordAudit({
+    actor,
+    itemType: 'quiz',
+    itemId: id,
+    itemName: existing.nameEn,
+    action: 'delete',
+    changes: { name: { from: existing.nameEn, to: null } },
+  });
 }

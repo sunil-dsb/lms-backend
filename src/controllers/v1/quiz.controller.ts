@@ -25,6 +25,7 @@ export const createQuiz = catchAsync(
 
     const quiz = await quizzesService.createQuiz(parsed.data, {
       userId: req.userId,
+      name: req.user?.name,
     });
 
     res
@@ -83,7 +84,10 @@ export const updateQuiz = catchAsync(
       throw parsed.error;
     }
 
-    const quiz = await quizzesService.updateQuiz(quizId, parsed.data);
+    const quiz = await quizzesService.updateQuiz(quizId, parsed.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
 
     res
       .status(200)
@@ -106,7 +110,10 @@ export const deleteQuiz = catchAsync(
       throw new ApiError('Quiz ID is required', 400);
     }
 
-    await quizzesService.deleteQuiz(quizId);
+    await quizzesService.deleteQuiz(quizId, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
 
     res.status(200).json(ApiResponse.success('Quiz deleted successfully'));
   },

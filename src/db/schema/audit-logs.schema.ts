@@ -26,6 +26,7 @@ import { user } from './auth.schema.ts';
 export const auditItemTypes = [
   'course',
   'chapter',
+  'quiz',
   'procedure',
   'assignment',
   'station',

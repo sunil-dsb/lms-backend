@@ -200,6 +200,42 @@ function clip(s: string, max: number): string {
 }
 
 /**
+ * One short label per quiz question: the prompt with its choices listed and
+ * the correct one marked ✓. Question JSON (prompts, choices, answer ids) is
+ * too big for an audit row, and a count alone would miss the common edit —
+ * fixing a choice or moving the correct answer — so every part a reviewer
+ * could change appears in the label.
+ */
+export function summarizeQuestions(questions: unknown): string[] {
+  if (!Array.isArray(questions)) return [];
+  return questions.map(questionLabel);
+}
+
+const QUESTION_LABEL_MAX = 48;
+const CHOICE_LABEL_MAX = 16;
+
+function questionLabel(raw: unknown): string {
+  if (!raw || typeof raw !== 'object') return '';
+  const q = raw as Record<string, unknown>;
+
+  const prompt = firstText(q.question) ?? 'Question';
+  const head = clip(prompt, QUESTION_LABEL_MAX);
+
+  const choices = Array.isArray(q.choices) ? q.choices : [];
+  const parts: string[] = [];
+  for (const c of choices) {
+    if (!c || typeof c !== 'object') continue;
+    const choice = c as Record<string, unknown>;
+    const label = firstText(choice.label) ?? '';
+    const correct = choice.id === q.correctChoiceId;
+    if (!label && !correct) continue;
+    parts.push(clip(correct ? `${label} ✓`.trim() : label, CHOICE_LABEL_MAX));
+  }
+
+  return parts.length > 0 ? `${head} [${parts.join(', ')}]` : head;
+}
+
+/**
  * Chapter-content snapshot used when a whole chapter appears or disappears:
  * its block labels, or the chapter title when it has no content yet — so the
  * entry always says *what* went away, never just "—".
