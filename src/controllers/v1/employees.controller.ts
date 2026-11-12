@@ -244,6 +244,7 @@ export const listEmployees = catchAsync(
         or(
           ilike(employees.name, `%${search}%`),
           ilike(employees.email, `%${search}%`),
+          ilike(employees.employeeCode, `%${search}%`),
         )!,
       );
     }
