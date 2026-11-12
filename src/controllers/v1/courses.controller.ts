@@ -452,6 +452,61 @@ export const getCourseAssignments = catchAsync(
   },
 );
 
+// GET /api/v1/courses/admin/progress/export — Admin: export training & compliance progress as CSV
+export const exportTrainingProgress = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const rawStatus = req.query.status;
+    const validStatuses = [
+      'complete',
+      'in_progress',
+      'overdue',
+      'not_started',
+      'due_soon',
+      'restricted',
+    ] as const;
+    if (
+      rawStatus !== undefined &&
+      (typeof rawStatus !== 'string' ||
+        !validStatuses.includes(rawStatus as (typeof validStatuses)[number]))
+    ) {
+      throw new ApiError('Invalid progress status filter', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const rawGroupBy = req.query.groupBy;
+    if (
+      rawGroupBy !== undefined &&
+      rawGroupBy !== 'employee' &&
+      rawGroupBy !== 'course'
+    ) {
+      throw new ApiError('Invalid progress grouping', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const search =
+      typeof req.query.search === 'string' ? req.query.search : undefined;
+
+    const csvContent = await courseProgressService.exportTrainingProgressCsv({
+      ...(typeof rawStatus === 'string'
+        ? { status: rawStatus as (typeof validStatuses)[number] }
+        : {}),
+      ...(rawGroupBy === 'employee' || rawGroupBy === 'course'
+        ? { groupBy: rawGroupBy }
+        : { groupBy: 'employee' }),
+      ...(search !== undefined ? { search } : {}),
+    });
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `training-compliance-${rawGroupBy === 'course' ? 'courses' : 'employees'}-${dateStr}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.status(200).send(csvContent);
+  },
+);
+
 // GET /api/v1/courses/admin/progress — Admin: aggregated training progress
 export const getTrainingProgress = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -462,6 +517,7 @@ export const getTrainingProgress = catchAsync(
       'overdue',
       'not_started',
       'due_soon',
+      'restricted',
     ] as const;
     if (
       rawStatus !== undefined &&

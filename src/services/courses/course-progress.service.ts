@@ -187,7 +187,13 @@ export async function completeCurrentChapter(
  * Aggregated training progress for Admin Progress tab (`/admin/training/progress`).
  */
 export interface TrainingProgressOptions {
-  status?: 'complete' | 'in_progress' | 'overdue' | 'not_started' | 'due_soon';
+  status?:
+    | 'complete'
+    | 'in_progress'
+    | 'overdue'
+    | 'not_started'
+    | 'due_soon'
+    | 'restricted';
   groupBy?: 'employee' | 'course';
   page?: number;
   limit?: number;
@@ -207,10 +213,14 @@ export async function getTrainingProgress(
       courseTitleEs: trainingCourses.titleEs,
       employeeId: trainingCourseAssignments.employeeId,
       employeeName: employees.name,
+      employeeEmail: employees.email,
       stationIds: employees.stationIds,
+      isRequired: trainingCourseAssignments.isRequired,
       dueDate: trainingCourseAssignments.dueDate,
       currentChapterNumber: trainingChapters.number,
       courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+      overrideUntil: trainingCourseAssignments.overrideUntil,
+      overrideReason: trainingCourseAssignments.overrideReason,
     })
     .from(trainingCourseAssignments)
     .innerJoin(
@@ -244,9 +254,12 @@ export async function getTrainingProgress(
     {
       employeeId: string;
       name: string;
+      email: string | null;
       station: string;
       coursesDone: number;
       coursesTotal: number;
+      requiredDone: number;
+      requiredTotal: number;
       assignments: Array<{
         course: { id: string; titleEn: string; titleEs: string };
         dueDate: string;
@@ -255,6 +268,10 @@ export async function getTrainingProgress(
         isOverdue: boolean;
         isDueSoon: boolean;
         isStarted: boolean;
+        isRequired: boolean;
+        isOverridden: boolean;
+        overrideUntil: string | null;
+        overrideReason: string | null;
         courseCompletedAt: string | null;
       }>;
     }
@@ -285,6 +302,10 @@ export async function getTrainingProgress(
       !isComplete && !isOverdue && diffDays >= 0 && diffDays <= 3;
     const isStarted = !isComplete && (r.currentChapterNumber ?? 1) > 1;
 
+    const isOverridden = Boolean(
+      r.overrideUntil && new Date(r.overrideUntil) > new Date() && !isComplete,
+    );
+
     if (isComplete) {
       completed++;
     } else if (isOverdue) {
@@ -305,15 +326,23 @@ export async function getTrainingProgress(
       empEntry = {
         employeeId: r.employeeId,
         name: r.employeeName,
+        email: r.employeeEmail,
         station: stationName,
         coursesDone: 0,
         coursesTotal: 0,
+        requiredDone: 0,
+        requiredTotal: 0,
         assignments: [],
       };
       employeeMap.set(r.employeeId, empEntry);
     }
     empEntry.coursesTotal++;
     if (isComplete) empEntry.coursesDone++;
+    if (r.isRequired) {
+      empEntry.requiredTotal++;
+      if (isComplete) empEntry.requiredDone++;
+    }
+
     empEntry.assignments.push({
       course: {
         id: r.courseId,
@@ -326,6 +355,10 @@ export async function getTrainingProgress(
       isOverdue,
       isDueSoon,
       isStarted,
+      isRequired: r.isRequired,
+      isOverridden,
+      overrideUntil: r.overrideUntil ? r.overrideUntil.toISOString() : null,
+      overrideReason: r.overrideReason ?? null,
       courseCompletedAt: r.courseCompletedAt
         ? r.courseCompletedAt.toISOString()
         : null,
@@ -378,9 +411,24 @@ export async function getTrainingProgress(
     const allDone =
       emp.coursesTotal > 0 && emp.coursesDone === emp.coursesTotal;
 
+    const isRestricted = emp.assignments.some(
+      (a) => a.isRequired && a.isOverdue && !a.isOverridden,
+    );
+    const isOverridden =
+      !isRestricted &&
+      emp.assignments.some(
+        (a) => a.isRequired && a.isOverdue && a.isOverridden,
+      );
+
     const status:
-      'complete' | 'in_progress' | 'overdue' | 'not_started' | 'due_soon' =
-      allDone
+      | 'complete'
+      | 'in_progress'
+      | 'overdue'
+      | 'not_started'
+      | 'due_soon'
+      | 'restricted' = isRestricted
+      ? 'restricted'
+      : allDone
         ? 'complete'
         : hasOverdue
           ? 'overdue'
@@ -393,9 +441,15 @@ export async function getTrainingProgress(
     return {
       employeeId: emp.employeeId,
       name: emp.name,
+      email: emp.email,
       station: emp.station,
       coursesDone: emp.coursesDone,
       coursesTotal: emp.coursesTotal,
+      requiredCoursesDone: emp.requiredDone,
+      requiredCoursesTotal: emp.requiredTotal,
+      isRestricted,
+      isOverridden,
+      hasOverdue,
       currentCourse: current ? current.course : null,
       currentChapter: current ? current.currentChapter : null,
       status,
@@ -413,6 +467,8 @@ export async function getTrainingProgress(
               isOverdue: assignment.isOverdue,
               isDueSoon: assignment.isDueSoon,
               isStarted: assignment.isStarted,
+              isRequired: assignment.isRequired,
+              isOverridden: assignment.isOverridden,
               courseCompletedAt: assignment.courseCompletedAt,
             })),
           }
@@ -443,11 +499,24 @@ export async function getTrainingProgress(
     };
   });
 
+  const restricted = employeesList.filter((e) => e.isRestricted).length;
+
   let filteredEmployees = options.status
-    ? employeesList.filter((employee) => employee.status === options.status)
+    ? options.status === 'restricted'
+      ? employeesList.filter((employee) => employee.isRestricted)
+      : options.status === 'overdue'
+        ? employeesList.filter(
+            (employee) =>
+              employee.status === 'overdue' ||
+              employee.isRestricted ||
+              employee.hasOverdue,
+          )
+        : employeesList.filter((employee) => employee.status === options.status)
     : employeesList;
   let filteredCourses = options.status
-    ? coursesList.filter((course) => course.status === options.status)
+    ? options.status === 'restricted'
+      ? []
+      : coursesList.filter((course) => course.status === options.status)
     : coursesList;
 
   // Group tab counts reflect the selected status, independent of the search
@@ -502,10 +571,108 @@ export async function getTrainingProgress(
       overdue,
       notStarted,
       dueSoon,
+      restricted,
     },
     counts,
     employees: filteredEmployees,
     courses: filteredCourses,
     ...(pagination ? { pagination } : {}),
   };
+}
+
+/**
+ * Generates an RFC-4180 compliant CSV string representing the training & compliance progress.
+ */
+export async function exportTrainingProgressCsv(
+  options: TrainingProgressOptions = {},
+): Promise<string> {
+  const exportOpts: TrainingProgressOptions = {
+    includeAssignments: true,
+  };
+  if (options.status) exportOpts.status = options.status;
+  if (options.groupBy) exportOpts.groupBy = options.groupBy;
+  if (options.search) exportOpts.search = options.search;
+
+  // Retrieve unpaginated progress dataset with assignments included
+  const progress = await getTrainingProgress(exportOpts);
+
+  const escapeCsv = (val: unknown): string => {
+    if (val === null || val === undefined) return '""';
+    const str = String(val).replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const lines: string[] = [];
+
+  if (options.groupBy === 'course') {
+    lines.push(
+      [
+        'Course Name (EN)',
+        'Course Name (ES)',
+        'People Completed',
+        'People Assigned',
+        'Status',
+      ]
+        .map(escapeCsv)
+        .join(','),
+    );
+    for (const c of progress.courses) {
+      lines.push(
+        [
+          c.course.titleEn,
+          c.course.titleEs,
+          c.peopleDone,
+          c.peopleTotal,
+          c.status,
+        ]
+          .map(escapeCsv)
+          .join(','),
+      );
+    }
+  } else {
+    lines.push(
+      [
+        'Employee Name',
+        'Email',
+        'Station',
+        'Compliance Status',
+        'Is Restricted (Locked)',
+        'Active Manager Override',
+        'Required Courses Completed',
+        'Required Courses Total',
+        'All Courses Completed',
+        'All Courses Total',
+        'Overdue Courses',
+      ]
+        .map(escapeCsv)
+        .join(','),
+    );
+
+    for (const e of progress.employees) {
+      const overdueTitles = (e.assignments || [])
+        .filter((a) => a.isOverdue)
+        .map((a) => a.courseTitleEn)
+        .join('; ');
+
+      lines.push(
+        [
+          e.name,
+          e.email || '',
+          e.station,
+          e.status,
+          e.isRestricted ? 'YES' : 'NO',
+          e.isOverridden ? 'YES' : 'NO',
+          e.requiredCoursesDone ?? 0,
+          e.requiredCoursesTotal ?? 0,
+          e.coursesDone,
+          e.coursesTotal,
+          overdueTitles,
+        ]
+          .map(escapeCsv)
+          .join(','),
+      );
+    }
+  }
+
+  return lines.join('\r\n');
 }

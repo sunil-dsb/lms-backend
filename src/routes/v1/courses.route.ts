@@ -15,6 +15,7 @@ import {
   getMyTrainingCourse,
   getCourseAssignments,
   getTrainingProgress,
+  exportTrainingProgress,
   grantTrainingOverride,
   revokeTrainingOverride,
   updateCourseAssignments,
@@ -27,6 +28,12 @@ const coursesRoute: Router = express.Router();
 
 // Read routes (any authenticated user)
 coursesRoute.get('/', requireAuth, listCourses);
+coursesRoute.get(
+  '/admin/progress/export',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  exportTrainingProgress,
+);
 coursesRoute.get(
   '/admin/progress',
   requireAuth,
