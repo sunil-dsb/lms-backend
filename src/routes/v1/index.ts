@@ -12,6 +12,7 @@ import subcategoriesRoute from './subcategories.route.ts';
 import quizzesRoute from './quiz.route.ts';
 import coursesRoute from './courses.route.ts';
 import chaptersRoute from './chapters.route.ts';
+import auditRoute from './audit.route.ts';
 import { importProcedure } from '../../controllers/v1/procedures.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
@@ -69,6 +70,10 @@ const defaultRoutes = [
   {
     path: '/chapters',
     route: chaptersRoute,
+  },
+  {
+    path: '/audit-logs',
+    route: auditRoute,
   },
   {
     path: '/courses/:courseId/chapters',

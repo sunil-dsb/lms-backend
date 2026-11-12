@@ -15,6 +15,10 @@ import {
   getMyTrainingCourse,
   getCourseAssignments,
   getTrainingProgress,
+  exportTrainingProgress,
+  grantTrainingOverride,
+  revokeTrainingOverride,
+  updateCourseAssignments,
 } from '../../controllers/v1/courses.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
@@ -25,10 +29,28 @@ const coursesRoute: Router = express.Router();
 // Read routes (any authenticated user)
 coursesRoute.get('/', requireAuth, listCourses);
 coursesRoute.get(
+  '/admin/progress/export',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  exportTrainingProgress,
+);
+coursesRoute.get(
   '/admin/progress',
   requireAuth,
   requireRoles(['super_admin', 'manager']),
   getTrainingProgress,
+);
+coursesRoute.post(
+  '/admin/override/:employeeId',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  grantTrainingOverride,
+);
+coursesRoute.delete(
+  '/admin/override/:employeeId',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  revokeTrainingOverride,
 );
 coursesRoute.get(
   '/my-training',
@@ -86,6 +108,13 @@ coursesRoute.post(
   requireAuth,
   requireRoles(['super_admin']),
   unassignCourse,
+);
+
+coursesRoute.patch(
+  '/:id/assignments',
+  requireAuth,
+  requireRoles(['super_admin']),
+  updateCourseAssignments,
 );
 
 coursesRoute.patch(

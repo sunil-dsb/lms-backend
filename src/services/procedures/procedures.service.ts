@@ -20,6 +20,12 @@ import { procedures, quiz, type ProcedureStatus } from '../../db/index.ts';
 
 import { logger } from '../../config/logger.ts';
 import {
+  recordAudit,
+  diffChanges,
+  isSameValue,
+  type AuditActor,
+} from '../audit/audit.service.ts';
+import {
   procedureBodySchema,
   type Block,
   type CreateProcedureInput,
@@ -61,6 +67,7 @@ export interface PublicProcedure {
   isDirectlyAssigned?: boolean;
   isPromo: boolean;
   promoExpiresAt: string | null;
+  promoStartsAt: string | null;
   promoAudience: 'station' | 'everyone';
   status: ProcedureStatus;
   previousStatus: ProcedureStatus | null;
@@ -117,6 +124,7 @@ export function publicProcedure(
     assignUsers: p.assignUsers,
     isPromo: p.isPromo ?? false,
     promoExpiresAt: p.promoExpiresAt ? p.promoExpiresAt.toISOString() : null,
+    promoStartsAt: p.promoStartsAt ? p.promoStartsAt.toISOString() : null,
     promoAudience: (p.promoAudience as 'station' | 'everyone') ?? 'station',
     status: p.status,
     previousStatus: (p.previousStatus as ProcedureStatus) ?? null,
@@ -182,9 +190,45 @@ async function generateUniqueSlug(base: string): Promise<string> {
   return `${seed}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+/** Validate a list of employee ids: every id must exist and point at an
+ *  employee-role row. Shared by the generic `assignUsers` list and the promo
+ *  employee list so both go through the same existence + role checks. */
+async function assertValidAssignedEmployees(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const assigned = await db
+    .select({ id: employees.id, role: employees.role })
+    .from(employees)
+    .where(
+      sql`${employees.id} = ANY(ARRAY[${sql.join(
+        ids.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )}])`,
+    );
+
+  if (assigned.length !== ids.length) {
+    throw Object.assign(
+      new ApiError('One or more assigned users do not exist', 400),
+      {
+        errorCode: 'ASSIGNED_USER_NOT_FOUND',
+      },
+    );
+  }
+
+  const invalidRoles = assigned.filter((a) => a.role !== 'employee');
+  if (invalidRoles.length > 0) {
+    throw Object.assign(
+      new ApiError(
+        'Only users with the employee role can be assigned to procedures',
+        400,
+      ),
+      { errorCode: 'INVALID_ASSIGNED_USER_ROLE' },
+    );
+  }
+}
+
 export async function createProcedure(
   input: CreateProcedureInput,
-  actor: { employeeId: string; userId?: string | undefined },
+  actor: AuditActor & { employeeId: string },
 ): Promise<PublicProcedure> {
   const bodyEn = procedureBodySchema.parse(input.bodyEn);
   const bodyEs = procedureBodySchema.parse(input.bodyEs);
@@ -258,37 +302,7 @@ export async function createProcedure(
   }
 
   // Validate assignUsers to ensure they are valid employees (and not super_admins)
-  if (input.assignUsers && input.assignUsers.length > 0) {
-    const assigned = await db
-      .select({ id: employees.id, role: employees.role })
-      .from(employees)
-      .where(
-        sql`${employees.id} = ANY(ARRAY[${sql.join(
-          input.assignUsers.map((id) => sql`${id}::uuid`),
-          sql`, `,
-        )}])`,
-      );
-
-    if (assigned.length !== input.assignUsers.length) {
-      throw Object.assign(
-        new ApiError('One or more assigned users do not exist', 400),
-        {
-          errorCode: 'ASSIGNED_USER_NOT_FOUND',
-        },
-      );
-    }
-
-    const invalidRoles = assigned.filter((a) => a.role !== 'employee');
-    if (invalidRoles.length > 0) {
-      throw Object.assign(
-        new ApiError(
-          'Only users with the employee role can be assigned to procedures',
-          400,
-        ),
-        { errorCode: 'INVALID_ASSIGNED_USER_ROLE' },
-      );
-    }
-  }
+  await assertValidAssignedEmployees(input.assignUsers ?? []);
 
   const id = crypto.randomUUID();
   const slug = await generateUniqueSlug(slugify(input.titleEn));
@@ -310,6 +324,7 @@ export async function createProcedure(
       ? new Date(input.promoExpiresAt)
       : null,
     promoAudience: input.promoAudience ?? 'station',
+    promoStartsAt: input.promoStartsAt ? new Date(input.promoStartsAt) : null,
     status: input.status,
     blocksEn: bodyEn,
     blocksEs: bodyEs,
@@ -337,6 +352,19 @@ export async function createProcedure(
   if (row.proc.assignUsers && row.proc.assignUsers.length > 0) {
     pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
   }
+
+  await recordAudit({
+    actor,
+    itemType: 'procedure',
+    itemId: id,
+    itemName: pub.titleEn,
+    action: 'create',
+    changes: {
+      title: { from: null, to: input.titleEn },
+      status: { from: null, to: input.status },
+    },
+  });
+
   return pub;
 }
 
@@ -344,6 +372,7 @@ export async function createProcedure(
 export async function updateProcedure(
   id: string,
   input: UpdateProcedureInput,
+  actor: AuditActor,
 ): Promise<PublicProcedure> {
   const [existing] = await db
     .select()
@@ -478,6 +507,11 @@ export async function updateProcedure(
       ...(input.promoAudience !== undefined && {
         promoAudience: input.promoAudience,
       }),
+      ...(input.promoStartsAt !== undefined && {
+        promoStartsAt: input.promoStartsAt
+          ? new Date(input.promoStartsAt)
+          : null,
+      }),
       ...(input.status !== undefined && { status: input.status }),
       ...(bodyEn !== undefined && { blocksEn: bodyEn }),
       ...(bodyEs !== undefined && { blocksEs: bodyEs }),
@@ -507,6 +541,35 @@ export async function updateProcedure(
   if (row.proc.assignUsers && row.proc.assignUsers.length > 0) {
     pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
   }
+
+  const changes = diffChanges(
+    existing as unknown as Record<string, unknown>,
+    row.proc as unknown as Record<string, unknown>,
+    [
+      'titleEn',
+      'titleEs',
+      'purposeEn',
+      'purposeEs',
+      'status',
+      'subcategoryId',
+      'stationIds',
+      'assignUsers',
+      'isPromo',
+      'blocksEn',
+      'blocksEs',
+    ],
+  );
+  if (changes) {
+    await recordAudit({
+      actor,
+      itemType: 'procedure',
+      itemId: id,
+      itemName: row.proc.titleEn,
+      action: 'update',
+      changes,
+    });
+  }
+
   return pub;
 }
 
@@ -561,10 +624,25 @@ export async function listProcedures(
       conditions.push(userMatch);
     } else {
       // Employees can see procedures assigned to them or their stations.
-      // Unscoped, non-promo procedures are kitchen-wide. Promos remain limited
-      // to their selected station IDs.
+      // Unscoped, non-promo procedures are kitchen-wide.
+      //
+      // Promos are employee-assigned through the same `assignUsers` list a
+      // manager fills in the editor's Assign block: a promo row is visible
+      // to a viewer only when their employee id is in `assign_users`, and
+      // stations never widen it. Legacy rows with NULL `assign_users` keep
+      // station-based visibility; a newly saved empty array means nobody is
+      // selected and must not widen visibility to the whole station.
       const visibilityMatches: SQL[] = [userMatch];
-      if (stationMatch) visibilityMatches.push(stationMatch);
+      if (stationMatch) {
+        // Non-promo rows: station overlap as before.
+        visibilityMatches.push(
+          sql`${procedures.isPromo} = false AND ${stationMatch}`,
+        );
+        // Legacy promos with NULL employee assignment: station overlap.
+        visibilityMatches.push(
+          sql`${procedures.isPromo} = true AND ${procedures.assignUsers} IS NULL AND ${stationMatch}`,
+        );
+      }
       const kitchenWideMatch = sql`${procedures.isPromo} = false AND coalesce(array_length(${procedures.stationIds}, 1), 0) = 0`;
       visibilityMatches.push(kitchenWideMatch);
 
@@ -719,7 +797,10 @@ export async function getProcedureBySlug(
 /** Archive a procedure (draft → archived or published → archived).
  *  Saves the current status in `previousStatus` so it can be restored.
  *  Throws 404 when the id doesn't exist or the procedure is already archived. */
-export async function archiveProcedure(id: string): Promise<PublicProcedure> {
+export async function archiveProcedure(
+  id: string,
+  actor: AuditActor,
+): Promise<PublicProcedure> {
   const [existing] = await db
     .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
@@ -749,6 +830,17 @@ export async function archiveProcedure(id: string): Promise<PublicProcedure> {
     })
     .where(eq(procedures.id, id));
 
+  await recordAudit({
+    actor,
+    itemType: 'procedure',
+    itemId: id,
+    itemName: existing.proc.titleEn,
+    action: 'archive',
+    changes: {
+      status: { from: existing.proc.status, to: 'archived' },
+    },
+  });
+
   return publicProcedure({
     ...existing.proc,
     status: 'archived',
@@ -761,7 +853,10 @@ export async function archiveProcedure(id: string): Promise<PublicProcedure> {
 /** Unarchive a procedure — restores it to its `previousStatus` (draft or
  *  published). Falls back to 'draft' if no previousStatus was recorded.
  *  Throws 404 when the id doesn't exist or the procedure is not archived. */
-export async function unarchiveProcedure(id: string): Promise<PublicProcedure> {
+export async function unarchiveProcedure(
+  id: string,
+  actor: AuditActor,
+): Promise<PublicProcedure> {
   const [existing] = await db
     .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
@@ -794,6 +889,17 @@ export async function unarchiveProcedure(id: string): Promise<PublicProcedure> {
     })
     .where(eq(procedures.id, id));
 
+  await recordAudit({
+    actor,
+    itemType: 'procedure',
+    itemId: id,
+    itemName: existing.proc.titleEn,
+    action: 'unarchive',
+    changes: {
+      status: { from: 'archived', to: restoreStatus },
+    },
+  });
+
   return publicProcedure({
     ...existing.proc,
     status: restoreStatus,
@@ -807,6 +913,7 @@ export async function unarchiveProcedure(id: string): Promise<PublicProcedure> {
 export async function updateProcedureStations(
   id: string,
   stationIds: string[] | null,
+  actor: AuditActor,
 ): Promise<PublicProcedure> {
   const ids = stationIds ?? [];
   if (ids.length > 0) {
@@ -820,6 +927,13 @@ export async function updateProcedureStations(
       });
     }
   }
+
+  const [before] = await db
+    .select({ titleEn: procedures.titleEn, stationIds: procedures.stationIds })
+    .from(procedures)
+    .where(eq(procedures.id, id))
+    .limit(1);
+
   const now = new Date();
   await db
     .update(procedures)
@@ -836,12 +950,32 @@ export async function updateProcedureStations(
       errorCode: 'NOT_FOUND',
     });
   }
+
+  if (!isSameValue(before?.stationIds ?? null, row.proc.stationIds)) {
+    await recordAudit({
+      actor,
+      itemType: 'procedure',
+      itemId: id,
+      itemName: row.proc.titleEn,
+      action: 'update',
+      changes: {
+        stationIds: {
+          from: before?.stationIds ?? null,
+          to: row.proc.stationIds,
+        },
+      },
+    });
+  }
+
   return publicProcedure({ ...row.proc, subcategory: row.subcategory });
 }
 
 /** Publish a procedure (draft → published).
  *  Throws 404 when the id doesn't exist, 409 when already published or archived. */
-export async function publishProcedure(id: string): Promise<PublicProcedure> {
+export async function publishProcedure(
+  id: string,
+  actor: AuditActor,
+): Promise<PublicProcedure> {
   const [existing] = await db
     .select({ proc: procedures, subcategory: subcategories })
     .from(procedures)
@@ -888,6 +1022,17 @@ export async function publishProcedure(id: string): Promise<PublicProcedure> {
     .set({ status: 'published', updatedAt: now })
     .where(eq(procedures.id, id));
 
+  await recordAudit({
+    actor,
+    itemType: 'procedure',
+    itemId: id,
+    itemName: existing.proc.titleEn,
+    action: 'publish',
+    changes: {
+      status: { from: existing.proc.status, to: 'published' },
+    },
+  });
+
   return publicProcedure({
     ...existing.proc,
     status: 'published',
@@ -899,9 +1044,17 @@ export async function publishProcedure(id: string): Promise<PublicProcedure> {
 /** Delete a procedure by ID.
  *  Also cascade deletes any quiz linked to this procedure.
  *  Throws 404 when the id doesn't exist. */
-export async function deleteProcedure(id: string): Promise<void> {
+export async function deleteProcedure(
+  id: string,
+  actor: AuditActor,
+): Promise<void> {
+  // Capture the title first — after the DELETE the label is gone.
   const [existing] = await db
-    .select({ id: procedures.id, quizId: procedures.quizId })
+    .select({
+      id: procedures.id,
+      quizId: procedures.quizId,
+      titleEn: procedures.titleEn,
+    })
     .from(procedures)
     .where(eq(procedures.id, id))
     .limit(1);
@@ -913,6 +1066,15 @@ export async function deleteProcedure(id: string): Promise<void> {
   }
 
   await db.delete(procedures).where(eq(procedures.id, id));
+
+  await recordAudit({
+    actor,
+    itemType: 'procedure',
+    itemId: id,
+    itemName: existing.titleEn,
+    action: 'delete',
+    changes: { title: { from: existing.titleEn, to: null } },
+  });
 
   // If this procedure had a linked quiz, delete it as well (if no other procedure shares it)
   if (existing.quizId) {

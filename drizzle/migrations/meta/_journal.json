@@ -71,6 +71,27 @@
       "when": 1793800000000,
       "tag": "0009_required_assignments",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793880693014,
+      "tag": "0010_normal_white_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794390665703,
+      "tag": "0011_silent_loki",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794474895311,
+      "tag": "0012_omniscient_switch",
+      "breakpoints": true
     }
   ]
 }

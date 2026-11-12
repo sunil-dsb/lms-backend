@@ -110,11 +110,7 @@ async function seedCategories() {
       nameEs: 'Recetas',
       categoryType: 'station_based' as const,
       categoryIcon: 'book-open',
-      subcats: [
-        { en: 'Plating', es: 'Emplatado' },
-        { en: 'Cooking', es: 'Cocción' },
-        { en: 'Portion Standards', es: 'Estándares de Porciones' },
-      ],
+      subcats: [{ en: 'Cooking', es: 'Cocción' }],
     },
   ];
 

@@ -22,6 +22,9 @@ export const trainingCourses = pgTable(
       .notNull()
       .default('published'),
     assignUsers: uuid('assign_users').array(),
+    stationIds: uuid('station_ids').array(),
+    locationIds: uuid('location_ids').array(),
+    jobIds: uuid('job_ids').array(),
     createdBy: text('created_by').references(() => user.id, {
       onDelete: 'set null',
     }),
@@ -68,6 +71,9 @@ export const createCourseInputSchema = z.object({
   purposeEn: z.string().trim().min(1, 'English purpose is required'),
   purposeEs: z.string().trim().min(1, 'Spanish purpose is required'),
   assignUsers: z.array(z.string().uuid()).optional(),
+  stationIds: z.array(z.string().uuid()).optional(),
+  locationIds: z.array(z.string().uuid()).optional(),
+  jobIds: z.array(z.string().uuid()).optional(),
   /** Chapters can be supplied immediately on creation. */
   chapters: z.array(chapterInputSchema).default([]),
 });
@@ -79,6 +85,9 @@ export const updateCourseInputSchema = z.object({
   purposeEn: z.string().trim().min(1).optional(),
   purposeEs: z.string().trim().min(1).optional(),
   assignUsers: z.array(z.string().uuid()).optional(),
+  stationIds: z.array(z.string().uuid()).optional(),
+  locationIds: z.array(z.string().uuid()).optional(),
+  jobIds: z.array(z.string().uuid()).optional(),
   /**
    * Full chapter array. When provided the service replaces the entire chapter
    * set (delete omitted chapters, upsert provided ones) inside a transaction.
@@ -88,7 +97,10 @@ export const updateCourseInputSchema = z.object({
 export type UpdateCourseInput = z.infer<typeof updateCourseInputSchema>;
 
 export const assignCourseInputSchema = z.object({
-  employeeIds: z.array(z.string().uuid()),
+  employeeIds: z.array(z.string().uuid()).default([]),
+  stationIds: z.array(z.string().uuid()).optional(),
+  locationIds: z.array(z.string().uuid()).optional(),
+  jobIds: z.array(z.string().uuid()).optional(),
   isRequired: z.boolean().default(false),
   dueDate: z
     .string()
@@ -109,3 +121,17 @@ export const unassignCourseInputSchema = z.object({
     .min(1, 'At least one employee ID is required'),
 });
 export type UnassignCourseInput = z.infer<typeof unassignCourseInputSchema>;
+
+/**
+ * Retimes existing assignments: same date rules as assign (format only, so a
+ * past due date stays expressible — useful for making something overdue).
+ */
+export const updateDueDateInputSchema = z.object({
+  employeeIds: z
+    .array(z.string().uuid())
+    .min(1, 'At least one employee ID is required'),
+  dueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
+});
+export type UpdateDueDateInput = z.infer<typeof updateDueDateInputSchema>;

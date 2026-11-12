@@ -7,6 +7,11 @@ import {
 import { db } from '../../db/client.ts';
 import { employees, locations } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
+import {
+  recordAudit,
+  diffChanges,
+  type AuditActor,
+} from '../audit/audit.service.ts';
 
 export interface PublicLocation {
   id: string;
@@ -57,6 +62,7 @@ export async function listLocations(
 
 export async function createLocation(
   input: LocationCreateInput,
+  actor: AuditActor,
 ): Promise<PublicLocation> {
   // Locations don't have a separate "id" UI field — backend generates a UUID
   // so the admin only has to type the display name. Existing seeded rows
@@ -73,12 +79,23 @@ export async function createLocation(
       errorCode: 'INTERNAL_ERROR',
     });
   }
+
+  await recordAudit({
+    actor,
+    itemType: 'location',
+    itemId: id,
+    itemName: row.name,
+    action: 'create',
+    changes: { name: { from: null, to: row.name } },
+  });
+
   return publicLocation(row);
 }
 
 export async function updateLocation(
   id: string,
   patch: LocationPatchInput,
+  actor: AuditActor,
 ): Promise<PublicLocation> {
   const [existing] = await db
     .select()
@@ -101,14 +118,34 @@ export async function updateLocation(
       errorCode: 'INTERNAL_ERROR',
     });
   }
+
+  const changes = diffChanges(
+    existing as unknown as Record<string, unknown>,
+    updated as unknown as Record<string, unknown>,
+    ['name'],
+  );
+  if (changes) {
+    await recordAudit({
+      actor,
+      itemType: 'location',
+      itemId: id,
+      itemName: updated.name,
+      action: 'update',
+      changes,
+    });
+  }
+
   return publicLocation(updated);
 }
 
 // Hard delete — refused when any employee still references the location.
 // employees.location_id has ON DELETE restrict.
-export async function deleteLocation(id: string): Promise<void> {
+export async function deleteLocation(
+  id: string,
+  actor: AuditActor,
+): Promise<void> {
   const [existing] = await db
-    .select({ id: locations.id })
+    .select({ id: locations.id, name: locations.name })
     .from(locations)
     .where(eq(locations.id, id))
     .limit(1);
@@ -132,4 +169,13 @@ export async function deleteLocation(id: string): Promise<void> {
     );
   }
   await db.delete(locations).where(eq(locations.id, id));
+
+  await recordAudit({
+    actor,
+    itemType: 'location',
+    itemId: id,
+    itemName: existing.name,
+    action: 'delete',
+    changes: { name: { from: existing.name, to: null } },
+  });
 }

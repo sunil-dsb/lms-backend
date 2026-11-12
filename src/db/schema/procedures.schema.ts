@@ -47,6 +47,12 @@ export const procedures = pgTable(
       .$type<'station' | 'everyone'>()
       .default('station')
       .notNull(),
+    // Promo run window start — the dish stays out of the Promo section until
+    // this instant (no value = active immediately). Promo visibility itself
+    // reuses the existing `assignUsers` employee list: when `is_promo` is
+    // true, only employees whose id is in `assign_users` see the dish in
+    // their Promo section.
+    promoStartsAt: timestamp('promo_starts_at', { withTimezone: true }),
     createdBy: text('created_by').references(() => user.id, {
       onDelete: 'set null',
     }),
@@ -367,6 +373,7 @@ export const createProcedureInputSchema = z.object({
   assignUsers: z.array(z.string().uuid()).optional(),
   isPromo: z.boolean().default(false).optional(),
   promoExpiresAt: z.string().nullable().optional(),
+  promoStartsAt: z.string().nullable().optional(),
   promoAudience: z.enum(['station', 'everyone']).default('station').optional(),
   status: z.enum(['draft', 'published']).default('draft'),
   bodyEn: procedureBodySchema,

@@ -8,6 +8,7 @@ import {
   updateCourseInputSchema,
   assignCourseInputSchema,
   unassignCourseInputSchema,
+  updateDueDateInputSchema,
   type TrainingCourseStatus,
 } from '../../db/index.ts';
 import * as coursesService from '../../services/courses/courses.service.ts';
@@ -157,6 +158,7 @@ export const createCourse = catchAsync(
 
     const course = await coursesService.createCourse(parsed.data, {
       userId: req.userId,
+      name: req.user?.name,
     });
 
     res
@@ -187,6 +189,7 @@ export const updateCourse = catchAsync(
       parsed.data,
       {
         userId: req.userId,
+        name: req.user?.name,
       },
     );
 
@@ -208,7 +211,10 @@ export const archiveCourse = catchAsync(
       });
     }
 
-    const course = await coursesService.archiveCourse(idValidation.data);
+    const course = await coursesService.archiveCourse(idValidation.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res.status(200).json(
       ApiResponse.success('Training course archived successfully', {
         course,
@@ -227,7 +233,10 @@ export const unarchiveCourse = catchAsync(
       });
     }
 
-    const course = await coursesService.unarchiveCourse(idValidation.data);
+    const course = await coursesService.unarchiveCourse(idValidation.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res.status(200).json(
       ApiResponse.success('Training course restored successfully', {
         course,
@@ -246,7 +255,10 @@ export const deleteCourse = catchAsync(
       });
     }
 
-    await coursesService.deleteCourse(idValidation.data);
+    await coursesService.deleteCourse(idValidation.data, {
+      userId: req.userId,
+      name: req.user?.name,
+    });
     res
       .status(200)
       .json(ApiResponse.success('Training course deleted successfully', null));
@@ -269,6 +281,7 @@ export const assignCourse = catchAsync(
         req.body?.employeeIds ||
         req.body?.userIds ||
         (Array.isArray(req.body) ? req.body : []),
+      stationIds: req.body?.stationIds,
       dueDate: req.body?.dueDate,
       mode: req.body?.mode || 'add',
       isRequired: req.body?.isRequired,
@@ -282,6 +295,7 @@ export const assignCourse = catchAsync(
     const result = await courseAssignmentsService.assignCourse(
       idValidation.data,
       parsed.data,
+      { userId: req.userId, name: req.user?.name },
     );
 
     res
@@ -317,12 +331,45 @@ export const unassignCourse = catchAsync(
     const result = await courseAssignmentsService.unassignCourse(
       idValidation.data,
       parsed.data,
+      { userId: req.userId, name: req.user?.name },
     );
 
     res
       .status(200)
       .json(
         ApiResponse.success('Training course unassigned successfully', result),
+      );
+  },
+);
+
+// PATCH /api/v1/courses/:id/assignments — retime due dates on existing rows.
+export const updateCourseAssignments = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const idValidation = uuidParamSchema.safeParse(req.params.id);
+    if (!idValidation.success) {
+      throw new ApiError('Invalid course id format', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const parsed = updateDueDateInputSchema.safeParse({
+      employeeIds: req.body?.employeeIds,
+      dueDate: req.body?.dueDate,
+    });
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const result = await courseAssignmentsService.updateAssignmentDueDates(
+      idValidation.data,
+      parsed.data,
+      { userId: req.userId, name: req.user?.name },
+    );
+
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Assignment due date updated successfully', result),
       );
   },
 );
@@ -405,11 +452,73 @@ export const getCourseAssignments = catchAsync(
   },
 );
 
+// GET /api/v1/courses/admin/progress/export — Admin: export training & compliance progress as CSV
+export const exportTrainingProgress = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const rawStatus = req.query.status;
+    const validStatuses = [
+      'complete',
+      'in_progress',
+      'overdue',
+      'not_started',
+      'due_soon',
+      'restricted',
+    ] as const;
+    if (
+      rawStatus !== undefined &&
+      (typeof rawStatus !== 'string' ||
+        !validStatuses.includes(rawStatus as (typeof validStatuses)[number]))
+    ) {
+      throw new ApiError('Invalid progress status filter', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const rawGroupBy = req.query.groupBy;
+    if (
+      rawGroupBy !== undefined &&
+      rawGroupBy !== 'employee' &&
+      rawGroupBy !== 'course'
+    ) {
+      throw new ApiError('Invalid progress grouping', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const search =
+      typeof req.query.search === 'string' ? req.query.search : undefined;
+
+    const csvContent = await courseProgressService.exportTrainingProgressCsv({
+      ...(typeof rawStatus === 'string'
+        ? { status: rawStatus as (typeof validStatuses)[number] }
+        : {}),
+      ...(rawGroupBy === 'employee' || rawGroupBy === 'course'
+        ? { groupBy: rawGroupBy }
+        : { groupBy: 'employee' }),
+      ...(search !== undefined ? { search } : {}),
+    });
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `training-compliance-${rawGroupBy === 'course' ? 'courses' : 'employees'}-${dateStr}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.status(200).send(csvContent);
+  },
+);
+
 // GET /api/v1/courses/admin/progress — Admin: aggregated training progress
 export const getTrainingProgress = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const rawStatus = req.query.status;
-    const validStatuses = ['complete', 'in_progress', 'overdue'] as const;
+    const validStatuses = [
+      'complete',
+      'in_progress',
+      'overdue',
+      'not_started',
+      'due_soon',
+      'restricted',
+    ] as const;
     if (
       rawStatus !== undefined &&
       (typeof rawStatus !== 'string' ||
@@ -444,7 +553,7 @@ export const getTrainingProgress = catchAsync(
       return parsed;
     };
     const page = parsePositiveInteger(req.query.page, 1, 1_000_000);
-    const limit = parsePositiveInteger(req.query.limit, 25, 100);
+    const limit = parsePositiveInteger(req.query.limit, 10, 100);
     const search =
       typeof req.query.search === 'string' ? req.query.search : undefined;
     const rawIncludeAssignments = req.query.includeAssignments;
@@ -473,6 +582,94 @@ export const getTrainingProgress = catchAsync(
       .status(200)
       .json(
         ApiResponse.success('Training progress retrieved successfully', data),
+      );
+  },
+);
+
+// POST /api/v1/courses/admin/override/:employeeId
+export const grantTrainingOverride = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const employeeIdVal = uuidParamSchema.safeParse(req.params.employeeId);
+    if (!employeeIdVal.success) {
+      throw new ApiError('Invalid employee id format', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const { overrideUntil, reason, courseId } = req.body || {};
+    if (!overrideUntil || typeof overrideUntil !== 'string') {
+      throw new ApiError(
+        'overrideUntil is required (ISO date string)',
+        400,
+        true,
+        '',
+        {
+          code: 'INVALID_INPUT',
+        },
+      );
+    }
+
+    if (courseId) {
+      const courseIdVal = uuidParamSchema.safeParse(courseId);
+      if (!courseIdVal.success) {
+        throw new ApiError('Invalid course id format', 400, true, '', {
+          code: 'INVALID_INPUT',
+        });
+      }
+    }
+
+    const managerId = req.employee?.id || req.userId;
+    if (!managerId) {
+      throw new ApiError('Unauthorized', 401);
+    }
+
+    const result = await courseAssignmentsService.grantTrainingOverride({
+      employeeId: employeeIdVal.data,
+      courseId: courseId ? String(courseId) : undefined,
+      managerId,
+      overrideUntil,
+      reason: typeof reason === 'string' ? reason : undefined,
+      actor: { userId: req.userId, name: req.user?.name },
+    });
+
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Training override granted successfully', result),
+      );
+  },
+);
+
+// DELETE /api/v1/courses/admin/override/:employeeId
+export const revokeTrainingOverride = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const employeeIdVal = uuidParamSchema.safeParse(req.params.employeeId);
+    if (!employeeIdVal.success) {
+      throw new ApiError('Invalid employee id format', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const courseId = req.query?.courseId || req.body?.courseId;
+    if (courseId) {
+      const courseIdVal = uuidParamSchema.safeParse(courseId);
+      if (!courseIdVal.success) {
+        throw new ApiError('Invalid course id format', 400, true, '', {
+          code: 'INVALID_INPUT',
+        });
+      }
+    }
+
+    const result = await courseAssignmentsService.revokeTrainingOverride({
+      employeeId: employeeIdVal.data,
+      courseId: courseId ? String(courseId) : undefined,
+      actor: { userId: req.userId, name: req.user?.name },
+    });
+
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Training override revoked successfully', result),
       );
   },
 );

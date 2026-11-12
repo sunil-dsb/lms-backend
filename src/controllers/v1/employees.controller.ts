@@ -421,7 +421,12 @@ export const getEmployeeTraining = catchAsync(
         chapterCount: r.chapterCount,
         completedChapterCount: r.completedChapterCount,
         progressPercent: r.progressPercent,
-        status,
+        status: r.status || status,
+        overrideUntil: r.overrideUntil ?? null,
+        overriddenBy: r.overriddenBy ?? null,
+        overriddenAt: r.overriddenAt ?? null,
+        overrideReason: r.overrideReason ?? null,
+        isOverridden: r.isOverridden ?? false,
       };
     });
 

@@ -3,6 +3,7 @@ import {
   date,
   index,
   pgTable,
+  text,
   timestamp,
   uniqueIndex,
   uuid,
@@ -34,6 +35,12 @@ export const trainingCourseAssignments = pgTable(
     assignedAt: timestamp('assigned_at', { withTimezone: true })
       .defaultNow()
       .notNull(),
+    overrideUntil: timestamp('override_until', { withTimezone: true }),
+    overriddenBy: uuid('overridden_by').references(() => employees.id, {
+      onDelete: 'set null',
+    }),
+    overriddenAt: timestamp('overridden_at', { withTimezone: true }),
+    overrideReason: text('override_reason'),
   },
   (t) => ({
     courseEmployeeUnique: uniqueIndex(

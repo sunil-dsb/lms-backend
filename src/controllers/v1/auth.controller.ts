@@ -16,6 +16,7 @@ import ApiError from '../../shared/utils/ApiError.ts';
 import ApiResponse from '../../shared/utils/ApiResponse.ts';
 import catchAsync from '../../shared/utils/catchAsync.ts';
 import { publicEmployee } from './employees.controller.ts';
+import { syncEmployeeStationCourses } from '../../services/courses/course-assignments.service.ts';
 
 export const signUp = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -64,6 +65,13 @@ export const signUp = catchAsync(
 export const me = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const session = await getSessionService(req);
+    if (session?.employee?.id) {
+      try {
+        await syncEmployeeStationCourses(session.employee.id);
+      } catch (_err) {
+        // Non-blocking sync on /me
+      }
+    }
     res
       .status(200)
       .json(ApiResponse.success('Session retrieved Successfully', session));
@@ -214,6 +222,13 @@ export const setPassword = catchAsync(
           .where(eq(user.id, userId!));
       });
 
+      // Auto-assign any station courses that exist for this employee
+      try {
+        await syncEmployeeStationCourses(emp.id);
+      } catch (err) {
+        console.error('Failed to sync station courses on set-password:', err);
+      }
+
       const [updated] = await db
         .select()
         .from(employees)
@@ -274,6 +289,13 @@ export const setPassword = catchAsync(
       .update(user)
       .set({ name: employee.name })
       .where(eq(user.id, userId));
+
+    // Auto-assign any station courses that exist for this employee
+    try {
+      await syncEmployeeStationCourses(employee.id);
+    } catch (err) {
+      console.error('Failed to sync station courses on set-password:', err);
+    }
 
     const [updated] = await db
       .select()

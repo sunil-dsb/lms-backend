@@ -1,7 +1,13 @@
 import { eq, inArray, and, ne, gt, desc, ilike } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees, user, verification } from '../../db/index.ts';
-import { locations, stations, jobs } from '../../db/index.ts';
+import {
+  employees,
+  user,
+  verification,
+  locations,
+  stations,
+  jobs,
+} from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
 import type {
   LanguagePref,
@@ -10,7 +16,9 @@ import type {
 } from '../../db/index.ts';
 import { auth, magicLinkUrls } from '../../config/auth.ts';
 import config from '../../config/index.ts';
+import { logger } from '../../config/logger.ts';
 import crypto from 'node:crypto';
+import { syncEmployeeCourses } from '../courses/course-assignments.service.ts';
 
 export function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, ' ').normalize('NFC');
@@ -173,6 +181,13 @@ export async function createEmployeeTransaction(
       status: 'pending',
     });
 
+    // Auto-assign any courses that match the employee's location, jobs, or stations
+    try {
+      await syncEmployeeCourses(employeeId, tx);
+    } catch (err) {
+      logger.error({ err }, 'Failed to auto-assign courses to new employee');
+    }
+
     void adminId;
 
     const [row] = await tx
@@ -330,6 +345,16 @@ export async function updateEmployeeTransaction(
       throw new ApiError('Error updating employee', 500, true, '', {
         code: 'INTERNAL_ERROR',
       });
+
+    // Auto-assign any newly matching courses for updated location, jobs, or stations
+    try {
+      await syncEmployeeCourses(id, tx);
+    } catch (err) {
+      logger.error(
+        { err },
+        'Failed to auto-assign courses to updated employee',
+      );
+    }
 
     return { employee: updated };
   });

@@ -3,7 +3,7 @@ dotenv.config({ path: 'development.env' });
 import crypto from 'node:crypto';
 import { sql, closeDb } from '../src/db/client.ts';
 
-const LOCATIONS = ['Mexicana Main', 'Downtown Express', 'Almentria Mexicana'];
+const LOCATIONS = ['Alimentaria Mexicana'];
 
 async function seedLocations() {
   console.log('Seeding locations...');

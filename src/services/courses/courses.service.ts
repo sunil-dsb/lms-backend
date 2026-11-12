@@ -19,9 +19,13 @@ import {
 } from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
 import {
+  employees,
+  trainingCourseAssignments,
   trainingCourses,
   trainingChapters,
   quiz,
+  type AuditChanges,
+  type ChapterInput,
   type Quiz,
   type TrainingCourse,
   type TrainingChapter,
@@ -30,6 +34,14 @@ import {
   type TrainingCourseStatus,
 } from '../../db/index.ts';
 import { logger } from '../../config/logger.ts';
+import {
+  recordAudit,
+  diffChanges,
+  summarizeBlocks,
+  chapterContentSnapshot,
+  isSameValue,
+  type AuditActor,
+} from '../audit/audit.service.ts';
 
 export interface ChapterQuizSummary {
   id: string;
@@ -53,11 +65,88 @@ export interface CourseListItem extends TrainingCourse {
 }
 
 /**
+ * Synchronizes course assignments for all employees belonging to the given stations.
+ * Automatically marks the assignment as required, sets a 7-day due date, and assigns the first chapter.
+ */
+export async function syncCourseStationAssignments(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  courseId: string,
+  stationIds: string[],
+): Promise<void> {
+  if (!stationIds || stationIds.length === 0) return;
+
+  const [firstChapter] = await tx
+    .select({ id: trainingChapters.id })
+    .from(trainingChapters)
+    .where(eq(trainingChapters.courseId, courseId))
+    .orderBy(asc(trainingChapters.number))
+    .limit(1);
+
+  if (!firstChapter) return;
+
+  const stationEmployees = await tx
+    .select({ id: employees.id })
+    .from(employees)
+    .where(
+      and(
+        inArray(employees.status, ['active', 'pending']),
+        sql`${employees.stationIds} && ARRAY[${sql.join(
+          stationIds.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )}]`,
+      ),
+    );
+
+  if (stationEmployees.length === 0) return;
+
+  const defaultDue = new Date();
+  defaultDue.setDate(defaultDue.getDate() + 7);
+  const dueDateStr = defaultDue.toISOString().slice(0, 10);
+
+  const empIds: string[] = stationEmployees.map((e: { id: string }) => e.id);
+
+  for (const empId of empIds) {
+    await tx
+      .insert(trainingCourseAssignments)
+      .values({
+        courseId,
+        employeeId: empId,
+        dueDate: dueDateStr,
+        isRequired: true,
+        currentChapterId: firstChapter.id,
+      })
+      .onConflictDoNothing({
+        target: [
+          trainingCourseAssignments.courseId,
+          trainingCourseAssignments.employeeId,
+        ],
+      });
+  }
+
+  const [course] = await tx
+    .select({ assignUsers: trainingCourses.assignUsers })
+    .from(trainingCourses)
+    .where(eq(trainingCourses.id, courseId))
+    .limit(1);
+
+  const currentUsers = course?.assignUsers || [];
+  const updatedUsers = Array.from(new Set([...currentUsers, ...empIds]));
+  await tx
+    .update(trainingCourses)
+    .set({
+      assignUsers: updatedUsers,
+      updatedAt: new Date(),
+    })
+    .where(eq(trainingCourses.id, courseId));
+}
+
+/**
  * Creates a course and optionally its initial chapters in a single transaction.
  */
 export async function createCourse(
   input: CreateCourseInput,
-  actor: { userId?: string | undefined },
+  actor: AuditActor,
 ): Promise<CourseWithChapters> {
   return await db.transaction(async (tx) => {
     const [insertedCourse] = await tx
@@ -68,6 +157,7 @@ export async function createCourse(
         purposeEn: input.purposeEn,
         purposeEs: input.purposeEs,
         assignUsers: input.assignUsers || [],
+        stationIds: input.stationIds || [],
         status: 'published',
         createdBy: actor.userId || null,
       })
@@ -124,9 +214,34 @@ export async function createCourse(
       }));
     }
 
+    if (
+      insertedChapters.length > 0 &&
+      input.stationIds &&
+      input.stationIds.length > 0
+    ) {
+      await syncCourseStationAssignments(
+        tx,
+        insertedCourse.id,
+        input.stationIds,
+      );
+    }
+
     logger.info(
       `Course "${insertedCourse.titleEn}" (${insertedCourse.id}) created by ${actor.userId || 'system'} with ${insertedChapters.length} chapters`,
     );
+
+    await recordAudit({
+      actor,
+      executor: tx,
+      itemType: 'course',
+      itemId: insertedCourse.id,
+      itemName: insertedCourse.titleEn,
+      action: 'create',
+      changes: {
+        title: { from: null, to: insertedCourse.titleEn },
+        status: { from: null, to: insertedCourse.status },
+      },
+    });
 
     return {
       ...insertedCourse,
@@ -312,7 +427,7 @@ export async function listCourses(params: {
 export async function updateCourse(
   id: string,
   input: UpdateCourseInput,
-  actor: { userId?: string | undefined },
+  actor: AuditActor,
 ): Promise<CourseWithChapters> {
   return await db.transaction(async (tx) => {
     const [existing] = await tx
@@ -337,6 +452,8 @@ export async function updateCourse(
     if (input.purposeEs !== undefined) updateValues.purposeEs = input.purposeEs;
     if (input.assignUsers !== undefined)
       updateValues.assignUsers = input.assignUsers;
+    if (input.stationIds !== undefined)
+      updateValues.stationIds = input.stationIds;
 
     const [updatedCourse] = await tx
       .update(trainingCourses)
@@ -348,8 +465,27 @@ export async function updateCourse(
       throw new ApiError('Failed to update training course', 500);
     }
 
-    // If chapters are supplied, sync them (delete and reinsert to keep ordering consistent)
+    // If chapters are supplied, sync them (delete and reinsert to keep ordering consistent).
+    // Snapshot the old set first: the delete destroys the only "before"
+    // state the audit diff could compare against (block edits live here).
+    let chapterChanges: AuditChanges = {};
     if (input.chapters !== undefined) {
+      const beforeChapters = await tx
+        .select({
+          id: trainingChapters.id,
+          number: trainingChapters.number,
+          titleEn: trainingChapters.titleEn,
+          titleEs: trainingChapters.titleEs,
+          subtitleEn: trainingChapters.subtitleEn,
+          subtitleEs: trainingChapters.subtitleEs,
+          blocks: trainingChapters.blocks,
+          procedureId: trainingChapters.procedureId,
+          quizId: trainingChapters.quizId,
+          minCorrectAnswers: trainingChapters.minCorrectAnswers,
+        })
+        .from(trainingChapters)
+        .where(eq(trainingChapters.courseId, id));
+
       await tx
         .delete(trainingChapters)
         .where(eq(trainingChapters.courseId, id));
@@ -372,6 +508,8 @@ export async function updateCourse(
 
         await tx.insert(trainingChapters).values(chapterValues);
       }
+
+      chapterChanges = diffChapterSet(beforeChapters, input.chapters);
     }
 
     const currentChapterRows = await tx
@@ -396,9 +534,45 @@ export async function updateCourse(
         : null,
     }));
 
+    const effectiveStationIds =
+      input.stationIds !== undefined ? input.stationIds : existing.stationIds;
+    if (effectiveStationIds && effectiveStationIds.length > 0) {
+      await syncCourseStationAssignments(tx, id, effectiveStationIds);
+    }
+
     logger.info(
       `Course "${updatedCourse.titleEn}" (${id}) updated by ${actor.userId || 'system'}`,
     );
+
+    const courseChanges =
+      diffChanges(
+        existing as unknown as Record<string, unknown>,
+        updatedCourse as unknown as Record<string, unknown>,
+        [
+          'titleEn',
+          'titleEs',
+          'purposeEn',
+          'purposeEs',
+          'status',
+          'assignUsers',
+          'stationIds',
+        ],
+      ) ?? {};
+    const changes: AuditChanges = { ...courseChanges, ...chapterChanges };
+
+    // No-op saves (nothing moved in the diff) leave no trace: an "update"
+    // row with no field-level changes is noise in the log.
+    if (Object.keys(changes).length > 0) {
+      await recordAudit({
+        actor,
+        executor: tx,
+        itemType: 'course',
+        itemId: id,
+        itemName: updatedCourse.titleEn,
+        action: 'update',
+        changes,
+      });
+    }
 
     return {
       ...updatedCourse,
@@ -410,7 +584,10 @@ export async function updateCourse(
 /**
  * Sets course status to 'archived'.
  */
-export async function archiveCourse(id: string): Promise<TrainingCourse> {
+export async function archiveCourse(
+  id: string,
+  actor: AuditActor,
+): Promise<TrainingCourse> {
   const [course] = await db
     .update(trainingCourses)
     .set({
@@ -427,13 +604,24 @@ export async function archiveCourse(id: string): Promise<TrainingCourse> {
   }
 
   logger.info(`Course "${course.titleEn}" (${id}) archived`);
+  await recordAudit({
+    actor,
+    itemType: 'course',
+    itemId: id,
+    itemName: course.titleEn,
+    action: 'archive',
+    changes: { status: { from: 'published', to: 'archived' } },
+  });
   return course;
 }
 
 /**
  * Restores an archived course to 'published'.
  */
-export async function unarchiveCourse(id: string): Promise<TrainingCourse> {
+export async function unarchiveCourse(
+  id: string,
+  actor: AuditActor,
+): Promise<TrainingCourse> {
   const [course] = await db
     .update(trainingCourses)
     .set({
@@ -450,13 +638,32 @@ export async function unarchiveCourse(id: string): Promise<TrainingCourse> {
   }
 
   logger.info(`Course "${course.titleEn}" (${id}) unarchived/restored`);
+  await recordAudit({
+    actor,
+    itemType: 'course',
+    itemId: id,
+    itemName: course.titleEn,
+    action: 'unarchive',
+    changes: { status: { from: 'archived', to: 'published' } },
+  });
   return course;
 }
 
 /**
  * Hard delete a course and cascade delete all its chapters.
  */
-export async function deleteCourse(id: string): Promise<void> {
+export async function deleteCourse(
+  id: string,
+  actor: AuditActor,
+): Promise<void> {
+  // Capture the title first — after the DELETE the label is gone, and the
+  // audit entry must still read sensibly.
+  const [existing] = await db
+    .select({ titleEn: trainingCourses.titleEn })
+    .from(trainingCourses)
+    .where(eq(trainingCourses.id, id))
+    .limit(1);
+
   const result = await db
     .delete(trainingCourses)
     .where(eq(trainingCourses.id, id))
@@ -469,4 +676,128 @@ export async function deleteCourse(id: string): Promise<void> {
   }
 
   logger.info(`Course (${id}) and all chapters deleted`);
+  await recordAudit({
+    actor,
+    itemType: 'course',
+    itemId: id,
+    itemName: existing?.titleEn ?? null,
+    action: 'delete',
+    changes: { title: { from: existing?.titleEn ?? null, to: null } },
+  });
+}
+
+/** The chapter snapshot updateCourse takes before it deletes the old set. */
+type BeforeChapter = {
+  id: string;
+  number: number;
+  titleEn: string;
+  titleEs: string;
+  subtitleEn: string;
+  subtitleEs: string;
+  blocks: unknown[];
+  procedureId: string | null;
+  quizId: string | null;
+  minCorrectAnswers: number | null;
+};
+
+/**
+ * Field-level diff of a chapter-set replacement (updateCourse deletes and
+ * reinserts every chapter, so nothing downstream can see what moved — block
+ * edits used to audit as "No field-level changes recorded").
+ *
+ * Old→new pairs by client id first (chapters keep their id across the
+ * delete+reinsert), then by chapter number for id-less rows, so a client
+ * that regenerates ids still gets a positional diff instead of "everything
+ * deleted, everything added". Blocks are stored as one short label per block:
+ * the raw JSON is the whole document body, far too big for an audit row.
+ * Keys look like `Chapter “Intro” · blocks`; the UI splits on ` · ` and
+ * localizes the tail.
+ */
+function diffChapterSet(
+  before: BeforeChapter[],
+  after: ChapterInput[],
+): AuditChanges {
+  const changes: AuditChanges = {};
+
+  const pairs: Array<{ b: BeforeChapter; a: ChapterInput }> = [];
+  const usedBefore = new Set<string>();
+  const usedAfter = new Set<ChapterInput>();
+
+  const beforeById = new Map(before.map((b) => [b.id, b]));
+  for (const a of after) {
+    const b = a.id ? beforeById.get(a.id) : undefined;
+    if (b && !usedBefore.has(b.id)) {
+      pairs.push({ b, a });
+      usedBefore.add(b.id);
+      usedAfter.add(a);
+    }
+  }
+  for (const b of before) {
+    if (usedBefore.has(b.id)) continue;
+    const a = after.find((c) => !usedAfter.has(c) && c.number === b.number);
+    if (a) {
+      pairs.push({ b, a });
+      usedBefore.add(b.id);
+      usedAfter.add(a);
+    }
+  }
+
+  // One key per chapter; chapter titles can repeat, so fall back to
+  // (#2), (#3)… rather than silently dropping a change.
+  const chapterKey = (title: string, field: string): string => {
+    const base = `Chapter “${title.trim() || 'Untitled'}” · ${field}`;
+    let key = base;
+    let n = 2;
+    while (key in changes) key = `${base} (#${n++})`;
+    return key;
+  };
+  const put = (
+    title: string,
+    field: string,
+    from: unknown,
+    to: unknown,
+  ): void => {
+    if (isSameValue(from, to)) return;
+    changes[chapterKey(title, field)] = { from, to };
+  };
+
+  for (const { b, a } of pairs) {
+    const title = a.titleEn || b.titleEn;
+    put(title, 'titleEn', b.titleEn, a.titleEn);
+    put(title, 'titleEs', b.titleEs, a.titleEs);
+    put(title, 'subtitleEn', b.subtitleEn, a.subtitleEn);
+    put(title, 'subtitleEs', b.subtitleEs, a.subtitleEs);
+    put(title, 'position', b.number, a.number);
+    // Compare and store the labels: the label list is stable across client
+    // re-serialization (key order) and is exactly what the UI can render.
+    put(
+      title,
+      'blocks',
+      summarizeBlocks(b.blocks),
+      summarizeBlocks(a.blocks || []),
+    );
+    // The chapter row also carries the procedure link and the quiz wiring —
+    // without these a course save that only attaches/detaches a quiz audited
+    // as an update with no field-level changes.
+    put(title, 'procedureId', b.procedureId, a.procedureId);
+    put(title, 'quizId', b.quizId, a.quizId);
+    put(title, 'minCorrectAnswers', b.minCorrectAnswers, a.minCorrectAnswers);
+  }
+
+  for (const b of before) {
+    if (usedBefore.has(b.id)) continue;
+    changes[chapterKey(b.titleEn, 'removed')] = {
+      from: chapterContentSnapshot(b.titleEn, b.blocks),
+      to: null,
+    };
+  }
+  for (const a of after) {
+    if (usedAfter.has(a)) continue;
+    changes[chapterKey(a.titleEn, 'added')] = {
+      from: null,
+      to: chapterContentSnapshot(a.titleEn, a.blocks || []),
+    };
+  }
+
+  return changes;
 }

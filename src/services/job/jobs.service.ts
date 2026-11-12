@@ -7,6 +7,11 @@ import {
 import { db } from '../../db/client.ts';
 import { jobs, stations, employees } from '../../db/index.ts';
 import ApiError from '../../shared/utils/ApiError.ts';
+import {
+  recordAudit,
+  diffChanges,
+  type AuditActor,
+} from '../audit/audit.service.ts';
 
 export interface PublicJob {
   id: string;
@@ -145,7 +150,10 @@ export async function getJobStations(
   return sRows;
 }
 
-export async function createJob(input: JobCreateInput): Promise<PublicJob> {
+export async function createJob(
+  input: JobCreateInput,
+  actor: AuditActor,
+): Promise<PublicJob> {
   const id = crypto.randomUUID();
   await db.insert(jobs).values({
     id,
@@ -160,12 +168,25 @@ export async function createJob(input: JobCreateInput): Promise<PublicJob> {
     });
   }
 
+  await recordAudit({
+    actor,
+    itemType: 'job',
+    itemId: id,
+    itemName: row.name,
+    action: 'create',
+    changes: {
+      name: { from: null, to: row.name },
+      stationIds: { from: null, to: row.stationIds ?? [] },
+    },
+  });
+
   return publicJob(row);
 }
 
 export async function updateJob(
   id: string,
   patch: JobPatchInput,
+  actor: AuditActor,
 ): Promise<PublicJob> {
   if (Object.keys(patch).length === 0) {
     throw Object.assign(
@@ -202,12 +223,28 @@ export async function updateJob(
     });
   }
 
+  const changes = diffChanges(
+    existing as unknown as Record<string, unknown>,
+    updated as unknown as Record<string, unknown>,
+    ['name', 'stationIds'],
+  );
+  if (changes) {
+    await recordAudit({
+      actor,
+      itemType: 'job',
+      itemId: id,
+      itemName: updated.name,
+      action: 'update',
+      changes,
+    });
+  }
+
   return publicJob(updated);
 }
 
-export async function deleteJob(id: string): Promise<void> {
+export async function deleteJob(id: string, actor: AuditActor): Promise<void> {
   const [existing] = await db
-    .select({ id: jobs.id })
+    .select({ id: jobs.id, name: jobs.name })
     .from(jobs)
     .where(eq(jobs.id, id))
     .limit(1);
@@ -231,4 +268,13 @@ export async function deleteJob(id: string): Promise<void> {
     );
   }
   await db.delete(jobs).where(eq(jobs.id, id));
+
+  await recordAudit({
+    actor,
+    itemType: 'job',
+    itemId: id,
+    itemName: existing.name,
+    action: 'delete',
+    changes: { name: { from: existing.name, to: null } },
+  });
 }
