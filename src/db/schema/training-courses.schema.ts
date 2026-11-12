@@ -23,6 +23,8 @@ export const trainingCourses = pgTable(
       .default('published'),
     assignUsers: uuid('assign_users').array(),
     stationIds: uuid('station_ids').array(),
+    locationIds: uuid('location_ids').array(),
+    jobIds: uuid('job_ids').array(),
     createdBy: text('created_by').references(() => user.id, {
       onDelete: 'set null',
     }),
@@ -70,6 +72,8 @@ export const createCourseInputSchema = z.object({
   purposeEs: z.string().trim().min(1, 'Spanish purpose is required'),
   assignUsers: z.array(z.string().uuid()).optional(),
   stationIds: z.array(z.string().uuid()).optional(),
+  locationIds: z.array(z.string().uuid()).optional(),
+  jobIds: z.array(z.string().uuid()).optional(),
   /** Chapters can be supplied immediately on creation. */
   chapters: z.array(chapterInputSchema).default([]),
 });
@@ -82,6 +86,8 @@ export const updateCourseInputSchema = z.object({
   purposeEs: z.string().trim().min(1).optional(),
   assignUsers: z.array(z.string().uuid()).optional(),
   stationIds: z.array(z.string().uuid()).optional(),
+  locationIds: z.array(z.string().uuid()).optional(),
+  jobIds: z.array(z.string().uuid()).optional(),
   /**
    * Full chapter array. When provided the service replaces the entire chapter
    * set (delete omitted chapters, upsert provided ones) inside a transaction.
@@ -93,6 +99,8 @@ export type UpdateCourseInput = z.infer<typeof updateCourseInputSchema>;
 export const assignCourseInputSchema = z.object({
   employeeIds: z.array(z.string().uuid()).default([]),
   stationIds: z.array(z.string().uuid()).optional(),
+  locationIds: z.array(z.string().uuid()).optional(),
+  jobIds: z.array(z.string().uuid()).optional(),
   isRequired: z.boolean().default(false),
   dueDate: z
     .string()

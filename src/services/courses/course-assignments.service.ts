@@ -10,7 +10,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { db } from '../../db/client.ts';
+import { db, type Tx } from '../../db/client.ts';
 import {
   employees,
   trainingChapters,
@@ -558,15 +558,19 @@ export async function isProcedureInEmployeeRequiredCourse(
 }
 
 /**
- * Automatically checks if there are any published courses for this employee's station(s)
- * that have not yet been assigned to them, and creates the assignments.
+ * Automatically checks if there are any published courses whose assignment rules
+ * (location, job role, and/or station) match this employee, and creates assignments.
  */
-export async function syncEmployeeStationCourses(
+export async function syncEmployeeCourses(
   employeeId: string,
+  externalTx?: Tx,
 ): Promise<number> {
-  const [emp] = await db
+  const runner = externalTx ?? db;
+  const [emp] = await runner
     .select({
       id: employees.id,
+      locationId: employees.locationId,
+      jobIds: employees.jobIds,
       stationIds: employees.stationIds,
       status: employees.status,
     })
@@ -574,43 +578,88 @@ export async function syncEmployeeStationCourses(
     .where(eq(employees.id, employeeId))
     .limit(1);
 
-  if (
-    !emp ||
-    emp.status === 'deactivated' ||
-    !emp.stationIds ||
-    emp.stationIds.length === 0
-  ) {
+  if (!emp || emp.status === 'deactivated') {
     return 0;
   }
 
-  const matchingCourses = await db
+  type CourseRow = {
+    id: string;
+    assignUsers: string[] | null;
+    stationIds: string[] | null;
+    locationIds: string[] | null;
+    jobIds: string[] | null;
+  };
+
+  const allCourses: CourseRow[] = await runner
     .select({
       id: trainingCourses.id,
       assignUsers: trainingCourses.assignUsers,
+      stationIds: trainingCourses.stationIds,
+      locationIds: trainingCourses.locationIds,
+      jobIds: trainingCourses.jobIds,
     })
     .from(trainingCourses)
-    .where(
-      and(
-        eq(trainingCourses.status, 'published'),
-        sql`${trainingCourses.stationIds} && ARRAY[${sql.join(
-          emp.stationIds.map((id) => sql`${id}::uuid`),
-          sql`, `,
-        )}]`,
-      ),
-    );
+    .where(eq(trainingCourses.status, 'published'));
+
+  const matchingCourses = allCourses.filter((course: CourseRow) => {
+    const courseLocs = course.locationIds || [];
+    const courseJobs = course.jobIds || [];
+    const courseStations = course.stationIds || [];
+
+    // If course has NO rules at all, it's not an auto-assigned course
+    if (
+      courseLocs.length === 0 &&
+      courseJobs.length === 0 &&
+      courseStations.length === 0
+    ) {
+      return false;
+    }
+
+    // 1. Location match:
+    // If course specifies locationIds, employee's locationId must match.
+    // If course does NOT specify locationIds, it applies to all locations.
+    const matchesLocation =
+      courseLocs.length === 0 ||
+      (Boolean(emp.locationId) && courseLocs.includes(emp.locationId));
+    if (!matchesLocation) {
+      return false;
+    }
+
+    // 2. Role / Station match:
+    // Case A: Course only targets location (all employees at that location)
+    if (courseJobs.length === 0 && courseStations.length === 0) {
+      return true;
+    }
+
+    // Case B: Matches any specified job role
+    const empJobIds: string[] = emp.jobIds || [];
+    const matchesJob =
+      courseJobs.length > 0 &&
+      empJobIds.some((j: string) => courseJobs.includes(j));
+
+    // Case C: Matches any specified station
+    const empStationIds: string[] = emp.stationIds || [];
+    const matchesStation =
+      courseStations.length > 0 &&
+      empStationIds.some((s: string) => courseStations.includes(s));
+
+    return matchesJob || matchesStation;
+  });
 
   if (matchingCourses.length === 0) {
     return 0;
   }
 
-  const existingAssignments = await db
+  const existingAssignments = await runner
     .select({ courseId: trainingCourseAssignments.courseId })
     .from(trainingCourseAssignments)
     .where(eq(trainingCourseAssignments.employeeId, employeeId));
 
-  const assignedCourseIds = new Set(existingAssignments.map((a) => a.courseId));
+  const assignedCourseIds = new Set(
+    existingAssignments.map((a: { courseId: string }) => a.courseId),
+  );
   const coursesToAssign = matchingCourses.filter(
-    (c) => !assignedCourseIds.has(c.id),
+    (c: CourseRow) => !assignedCourseIds.has(c.id),
   );
 
   if (coursesToAssign.length === 0) {
@@ -624,14 +673,14 @@ export async function syncEmployeeStationCourses(
   let newlyAssignedCount = 0;
 
   for (const course of coursesToAssign) {
-    const [firstChapter] = await db
+    const [firstChapter] = await runner
       .select({ id: trainingChapters.id })
       .from(trainingChapters)
       .where(eq(trainingChapters.courseId, course.id))
       .orderBy(asc(trainingChapters.number))
       .limit(1);
 
-    await db
+    await runner
       .insert(trainingCourseAssignments)
       .values({
         courseId: course.id,
@@ -649,7 +698,7 @@ export async function syncEmployeeStationCourses(
 
     const currentUsers = course.assignUsers || [];
     if (!currentUsers.includes(employeeId)) {
-      await db
+      await runner
         .update(trainingCourses)
         .set({
           assignUsers: [...currentUsers, employeeId],
@@ -663,6 +712,9 @@ export async function syncEmployeeStationCourses(
 
   return newlyAssignedCount;
 }
+
+/** Backward-compatible alias for existing callers. */
+export const syncEmployeeStationCourses = syncEmployeeCourses;
 
 /** Employee list: every assignment stays visible. Non-required courses carry
  *  `locked: true` while restrictions are active (an incomplete required
@@ -844,6 +896,8 @@ export async function assignCourse(
   input: {
     employeeIds: string[];
     stationIds?: string[] | undefined;
+    locationIds?: string[] | undefined;
+    jobIds?: string[] | undefined;
     dueDate: string;
     isRequired?: boolean | undefined;
     mode?: 'add' | 'replace' | undefined;
@@ -857,6 +911,8 @@ export async function assignCourse(
         titleEn: trainingCourses.titleEn,
         assignUsers: trainingCourses.assignUsers,
         stationIds: trainingCourses.stationIds,
+        locationIds: trainingCourses.locationIds,
+        jobIds: trainingCourses.jobIds,
       })
       .from(trainingCourses)
       .where(eq(trainingCourses.id, courseId))
@@ -915,23 +971,48 @@ export async function assignCourse(
 
     const firstChapter = chapters[0];
 
-    // Combine any explicitly provided employeeIds with employees belonging to input.stationIds
+    // Combine explicitly provided employeeIds with employees matching stationIds, jobIds, and/or locationIds
     let targetEmployeeIds = Array.from(new Set(input.employeeIds || []));
-    if (input.stationIds && input.stationIds.length > 0) {
-      const stationEmployees = await tx
-        .select({ id: employees.id })
+
+    const hasRule =
+      (input.locationIds && input.locationIds.length > 0) ||
+      (input.jobIds && input.jobIds.length > 0) ||
+      (input.stationIds && input.stationIds.length > 0);
+
+    if (hasRule) {
+      const allActiveEmployees = await tx
+        .select({
+          id: employees.id,
+          locationId: employees.locationId,
+          jobIds: employees.jobIds,
+          stationIds: employees.stationIds,
+        })
         .from(employees)
-        .where(
-          and(
-            inArray(employees.status, ['active', 'pending']),
-            sql`${employees.stationIds} && ARRAY[${sql.join(
-              input.stationIds.map((id) => sql`${id}::uuid`),
-              sql`, `,
-            )}]`,
-          ),
-        );
+        .where(inArray(employees.status, ['active', 'pending']));
+
+      const matched = allActiveEmployees.filter((emp) => {
+        const matchesLoc =
+          !input.locationIds?.length ||
+          (Boolean(emp.locationId) &&
+            input.locationIds.includes(emp.locationId));
+        if (!matchesLoc) return false;
+
+        const hasJobRule = input.jobIds && input.jobIds.length > 0;
+        const hasStationRule = input.stationIds && input.stationIds.length > 0;
+
+        if (!hasJobRule && !hasStationRule) return true;
+
+        const matchesJob =
+          hasJobRule && emp.jobIds?.some((j) => input.jobIds!.includes(j));
+        const matchesStation =
+          hasStationRule &&
+          emp.stationIds?.some((s) => input.stationIds!.includes(s));
+
+        return Boolean(matchesJob || matchesStation);
+      });
+
       targetEmployeeIds = Array.from(
-        new Set([...targetEmployeeIds, ...stationEmployees.map((e) => e.id)]),
+        new Set([...targetEmployeeIds, ...matched.map((e) => e.id)]),
       );
     }
 
@@ -1033,6 +1114,20 @@ export async function assignCourse(
         input.mode === 'replace'
           ? input.stationIds
           : Array.from(new Set([...currentStations, ...input.stationIds]));
+    }
+    if (input.locationIds !== undefined) {
+      const currentLocations = existing.locationIds || [];
+      courseUpdates.locationIds =
+        input.mode === 'replace'
+          ? input.locationIds
+          : Array.from(new Set([...currentLocations, ...input.locationIds]));
+    }
+    if (input.jobIds !== undefined) {
+      const currentJobs = existing.jobIds || [];
+      courseUpdates.jobIds =
+        input.mode === 'replace'
+          ? input.jobIds
+          : Array.from(new Set([...currentJobs, ...input.jobIds]));
     }
 
     await tx

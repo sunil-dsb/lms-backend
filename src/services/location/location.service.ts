@@ -119,18 +119,21 @@ export async function updateLocation(
     });
   }
 
-  await recordAudit({
-    actor,
-    itemType: 'location',
-    itemId: id,
-    itemName: updated.name,
-    action: 'update',
-    changes: diffChanges(
-      existing as unknown as Record<string, unknown>,
-      updated as unknown as Record<string, unknown>,
-      ['name'],
-    ),
-  });
+  const changes = diffChanges(
+    existing as unknown as Record<string, unknown>,
+    updated as unknown as Record<string, unknown>,
+    ['name'],
+  );
+  if (changes) {
+    await recordAudit({
+      actor,
+      itemType: 'location',
+      itemId: id,
+      itemName: updated.name,
+      action: 'update',
+      changes,
+    });
+  }
 
   return publicLocation(updated);
 }

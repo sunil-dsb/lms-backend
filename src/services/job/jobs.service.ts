@@ -223,18 +223,21 @@ export async function updateJob(
     });
   }
 
-  await recordAudit({
-    actor,
-    itemType: 'job',
-    itemId: id,
-    itemName: updated.name,
-    action: 'update',
-    changes: diffChanges(
-      existing as unknown as Record<string, unknown>,
-      updated as unknown as Record<string, unknown>,
-      ['name', 'stationIds'],
-    ),
-  });
+  const changes = diffChanges(
+    existing as unknown as Record<string, unknown>,
+    updated as unknown as Record<string, unknown>,
+    ['name', 'stationIds'],
+  );
+  if (changes) {
+    await recordAudit({
+      actor,
+      itemType: 'job',
+      itemId: id,
+      itemName: updated.name,
+      action: 'update',
+      changes,
+    });
+  }
 
   return publicJob(updated);
 }

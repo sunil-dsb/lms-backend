@@ -436,15 +436,18 @@ export async function updateChapter(
       };
     }
 
-    await recordAudit({
-      actor,
-      executor: tx,
-      itemType: 'chapter',
-      itemId: chapterId,
-      itemName: updatedChapter.titleEn,
-      action: 'update',
-      changes: Object.keys(chapterChanges).length > 0 ? chapterChanges : null,
-    });
+    // No-op chapter saves leave no trace (same rule as course updates).
+    if (Object.keys(chapterChanges).length > 0) {
+      await recordAudit({
+        actor,
+        executor: tx,
+        itemType: 'chapter',
+        itemId: chapterId,
+        itemName: updatedChapter.titleEn,
+        action: 'update',
+        changes: chapterChanges,
+      });
+    }
 
     return {
       ...updatedChapter,

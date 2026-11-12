@@ -479,6 +479,9 @@ export async function updateCourse(
           subtitleEn: trainingChapters.subtitleEn,
           subtitleEs: trainingChapters.subtitleEs,
           blocks: trainingChapters.blocks,
+          procedureId: trainingChapters.procedureId,
+          quizId: trainingChapters.quizId,
+          minCorrectAnswers: trainingChapters.minCorrectAnswers,
         })
         .from(trainingChapters)
         .where(eq(trainingChapters.courseId, id));
@@ -557,15 +560,19 @@ export async function updateCourse(
       ) ?? {};
     const changes: AuditChanges = { ...courseChanges, ...chapterChanges };
 
-    await recordAudit({
-      actor,
-      executor: tx,
-      itemType: 'course',
-      itemId: id,
-      itemName: updatedCourse.titleEn,
-      action: 'update',
-      changes: Object.keys(changes).length > 0 ? changes : null,
-    });
+    // No-op saves (nothing moved in the diff) leave no trace: an "update"
+    // row with no field-level changes is noise in the log.
+    if (Object.keys(changes).length > 0) {
+      await recordAudit({
+        actor,
+        executor: tx,
+        itemType: 'course',
+        itemId: id,
+        itemName: updatedCourse.titleEn,
+        action: 'update',
+        changes,
+      });
+    }
 
     return {
       ...updatedCourse,
@@ -688,6 +695,9 @@ type BeforeChapter = {
   subtitleEn: string;
   subtitleEs: string;
   blocks: unknown[];
+  procedureId: string | null;
+  quizId: string | null;
+  minCorrectAnswers: number | null;
 };
 
 /**
@@ -766,6 +776,12 @@ function diffChapterSet(
       summarizeBlocks(b.blocks),
       summarizeBlocks(a.blocks || []),
     );
+    // The chapter row also carries the procedure link and the quiz wiring —
+    // without these a course save that only attaches/detaches a quiz audited
+    // as an update with no field-level changes.
+    put(title, 'procedureId', b.procedureId, a.procedureId);
+    put(title, 'quizId', b.quizId, a.quizId);
+    put(title, 'minCorrectAnswers', b.minCorrectAnswers, a.minCorrectAnswers);
   }
 
   for (const b of before) {

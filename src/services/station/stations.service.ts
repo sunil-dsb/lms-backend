@@ -125,18 +125,21 @@ export async function updateStation(
     });
   }
 
-  await recordAudit({
-    actor,
-    itemType: 'station',
-    itemId: id,
-    itemName: updated.name,
-    action: 'update',
-    changes: diffChanges(
-      existing as unknown as Record<string, unknown>,
-      updated as unknown as Record<string, unknown>,
-      ['name'],
-    ),
-  });
+  const changes = diffChanges(
+    existing as unknown as Record<string, unknown>,
+    updated as unknown as Record<string, unknown>,
+    ['name'],
+  );
+  if (changes) {
+    await recordAudit({
+      actor,
+      itemType: 'station',
+      itemId: id,
+      itemName: updated.name,
+      action: 'update',
+      changes,
+    });
+  }
 
   return publicStation(updated);
 }

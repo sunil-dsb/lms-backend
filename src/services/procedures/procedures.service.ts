@@ -22,6 +22,7 @@ import { logger } from '../../config/logger.ts';
 import {
   recordAudit,
   diffChanges,
+  isSameValue,
   type AuditActor,
 } from '../audit/audit.service.ts';
 import {
@@ -541,30 +542,33 @@ export async function updateProcedure(
     pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
   }
 
-  await recordAudit({
-    actor,
-    itemType: 'procedure',
-    itemId: id,
-    itemName: row.proc.titleEn,
-    action: 'update',
-    changes: diffChanges(
-      existing as unknown as Record<string, unknown>,
-      row.proc as unknown as Record<string, unknown>,
-      [
-        'titleEn',
-        'titleEs',
-        'purposeEn',
-        'purposeEs',
-        'status',
-        'subcategoryId',
-        'stationIds',
-        'assignUsers',
-        'isPromo',
-        'blocksEn',
-        'blocksEs',
-      ],
-    ),
-  });
+  const changes = diffChanges(
+    existing as unknown as Record<string, unknown>,
+    row.proc as unknown as Record<string, unknown>,
+    [
+      'titleEn',
+      'titleEs',
+      'purposeEn',
+      'purposeEs',
+      'status',
+      'subcategoryId',
+      'stationIds',
+      'assignUsers',
+      'isPromo',
+      'blocksEn',
+      'blocksEs',
+    ],
+  );
+  if (changes) {
+    await recordAudit({
+      actor,
+      itemType: 'procedure',
+      itemId: id,
+      itemName: row.proc.titleEn,
+      action: 'update',
+      changes,
+    });
+  }
 
   return pub;
 }
@@ -947,19 +951,21 @@ export async function updateProcedureStations(
     });
   }
 
-  await recordAudit({
-    actor,
-    itemType: 'procedure',
-    itemId: id,
-    itemName: row.proc.titleEn,
-    action: 'update',
-    changes: {
-      stationIds: {
-        from: before?.stationIds ?? null,
-        to: row.proc.stationIds,
+  if (!isSameValue(before?.stationIds ?? null, row.proc.stationIds)) {
+    await recordAudit({
+      actor,
+      itemType: 'procedure',
+      itemId: id,
+      itemName: row.proc.titleEn,
+      action: 'update',
+      changes: {
+        stationIds: {
+          from: before?.stationIds ?? null,
+          to: row.proc.stationIds,
+        },
       },
-    },
-  });
+    });
+  }
 
   return publicProcedure({ ...row.proc, subcategory: row.subcategory });
 }

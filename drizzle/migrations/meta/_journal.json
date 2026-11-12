@@ -85,6 +85,13 @@
       "when": 1794390665703,
       "tag": "0011_silent_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794474895311,
+      "tag": "0012_omniscient_switch",
+      "breakpoints": true
     }
   ]
 }
