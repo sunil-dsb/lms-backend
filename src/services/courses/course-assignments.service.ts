@@ -318,6 +318,18 @@ export interface EmployeeRequiredTrainingStatus {
   isOverridden: boolean;
   overrideUntil: string | null;
   overrideReason: string | null;
+  /**
+   * Employee-side locks (procedures, home blocks, non-required courses) are
+   * active: some incomplete required course is past its due date and has no
+   * active override. Being assigned is never enough on its own.
+   */
+  isRestricted: boolean;
+  /**
+   * First moment locks activate — midnight after the earliest incomplete
+   * due date (ISO); null when nothing is incomplete. Carried in the payload
+   * so the employee UI can show "locks on <date>" without another API change.
+   */
+  restrictAt: string | null;
 }
 
 /** Required courses are the published, required courses assigned to this employee. */
@@ -326,6 +338,7 @@ export async function getEmployeeRequiredTrainingStatus(
 ): Promise<EmployeeRequiredTrainingStatus> {
   let requiredAssignments: Array<{
     courseCompletedAt: Date | null;
+    dueDate: string;
     overrideUntil?: Date | null;
     overrideReason?: string | null;
   }>;
@@ -334,6 +347,7 @@ export async function getEmployeeRequiredTrainingStatus(
     requiredAssignments = await db
       .select({
         courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        dueDate: trainingCourseAssignments.dueDate,
         overrideUntil: trainingCourseAssignments.overrideUntil,
         overrideReason: trainingCourseAssignments.overrideReason,
       })
@@ -353,6 +367,7 @@ export async function getEmployeeRequiredTrainingStatus(
     const fallback = await db
       .select({
         courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
+        dueDate: trainingCourseAssignments.dueDate,
       })
       .from(trainingCourseAssignments)
       .innerJoin(
@@ -368,6 +383,7 @@ export async function getEmployeeRequiredTrainingStatus(
       );
     requiredAssignments = fallback.map((r) => ({
       courseCompletedAt: r.courseCompletedAt,
+      dueDate: r.dueDate,
       overrideUntil: null,
       overrideReason: null,
     }));
@@ -386,9 +402,9 @@ export async function getEmployeeRequiredTrainingStatus(
   );
 
   const now = new Date();
-  const activeOverrides = incompleteAssignments.filter(
-    (a) => a.overrideUntil && new Date(a.overrideUntil) > now,
-  );
+  const hasActiveOverride = (a: { overrideUntil?: Date | null }): boolean =>
+    Boolean(a.overrideUntil && new Date(a.overrideUntil) > now);
+  const activeOverrides = incompleteAssignments.filter(hasActiveOverride);
 
   const isOverridden =
     !isComplete &&
@@ -406,6 +422,37 @@ export async function getEmployeeRequiredTrainingStatus(
     ? (activeOverrides[0]?.overrideReason ?? null)
     : null;
 
+  // Restrictions begin only AFTER the due date: on the due date itself the
+  // employee still has full access, and being assigned alone never takes
+  // access away. dueDate is 'YYYY-MM-DD'; compare local midnights like the
+  // rest of the due-date code does.
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const lockStartMs = (dueDate: string): number => {
+    const due = new Date(dueDate);
+    due.setHours(0, 0, 0, 0);
+    // The first restricted day is the day after the due date.
+    due.setDate(due.getDate() + 1);
+    return due.getTime();
+  };
+
+  // A course only blocks while past its due date AND without an active
+  // override — overrides are per-course, so the employee stays locked until
+  // every overdue course carries an active override.
+  const isRestricted = incompleteAssignments.some(
+    (a) =>
+      lockStartMs(a.dueDate) <= todayStart.getTime() && !hasActiveOverride(a),
+  );
+
+  // First moment locks activate (midnight after the earliest incomplete due
+  // date); null when nothing is incomplete.
+  const restrictAt =
+    incompleteAssignments.length > 0
+      ? new Date(
+          Math.min(...incompleteAssignments.map((a) => lockStartMs(a.dueDate))),
+        ).toISOString()
+      : null;
+
   return {
     requiredCount: requiredAssignments.length,
     completedCount,
@@ -413,15 +460,21 @@ export async function getEmployeeRequiredTrainingStatus(
     isOverridden,
     overrideUntil,
     overrideReason,
+    isRestricted,
+    restrictAt,
   };
 }
 
-/** Blocks nonessential employee content until every required assignment is complete, unless an active override exists. */
+/**
+ * Blocks nonessential employee content only once restrictions are active:
+ * an incomplete required course past its due date without an active
+ * override. Before the due date passes the employee keeps full access.
+ */
 export async function assertEmployeeHasCompletedRequiredTraining(
   employeeId: string,
 ): Promise<void> {
   const requiredTraining = await getEmployeeRequiredTrainingStatus(employeeId);
-  if (requiredTraining.isComplete || requiredTraining.isOverridden) return;
+  if (!requiredTraining.isRestricted) return;
 
   throw new ApiError(
     'Complete required training before opening other LMS sections',
@@ -612,7 +665,8 @@ export async function syncEmployeeStationCourses(
 }
 
 /** Employee list: every assignment stays visible. Non-required courses carry
- *  `locked: true` while any required course is incomplete, so the client can
+ *  `locked: true` while restrictions are active (an incomplete required
+ *  course past its due date), so the client can
  *  render them as locked blocks (like the Home and Procedures lock states) and
  *  the detail endpoint still refuses deep links (`assertEmployeeCanAccessTrainingCourse`). */
 export async function listAvailableEmployeeTraining(employeeId: string) {
@@ -629,19 +683,20 @@ export async function listAvailableEmployeeTraining(employeeId: string) {
 
   const assignments = await listEmployeeTraining(employeeId);
   const requiredTraining = await getEmployeeRequiredTrainingStatus(employeeId);
-  const requiredDone =
-    requiredTraining.isComplete || requiredTraining.isOverridden;
+  // Cards lock only while restrictions are active — an assignment whose due
+  // date hasn't passed yet leaves everything open.
+  const restricted = requiredTraining.isRestricted;
 
   return {
     assignments: assignments.map((assignment) => ({
       ...assignment,
-      locked: !assignment.isRequired && !requiredDone,
+      locked: !assignment.isRequired && restricted,
     })),
     requiredTraining: {
       ...requiredTraining,
-      lockedCount: requiredDone
-        ? 0
-        : assignments.filter((assignment) => !assignment.isRequired).length,
+      lockedCount: restricted
+        ? assignments.filter((assignment) => !assignment.isRequired).length
+        : 0,
     },
   };
 }
@@ -679,7 +734,7 @@ export async function assertEmployeeCanAccessTrainingCourse(
   if (!courseAssignment.isRequired) {
     const requiredTraining =
       await getEmployeeRequiredTrainingStatus(employeeId);
-    if (!requiredTraining.isComplete && !requiredTraining.isOverridden) {
+    if (requiredTraining.isRestricted) {
       throw new ApiError(
         'Complete required training before opening other courses',
         403,
@@ -1099,6 +1154,111 @@ export async function unassignCourse(
       courseId,
       unassignedCount: employeeIds.length,
       remainingCount: nextUsers.length,
+    };
+  });
+}
+
+/**
+ * Changes the due date on existing assignments without touching progress,
+ * membership or the course's assignees — the safe counterpart to re-running
+ * assign (mode 'add' skips existing rows, mode 'replace' is destructive).
+ * One audit row per employee whose date actually moved, named
+ * `Employee · Course` like the override entries.
+ */
+export async function updateAssignmentDueDates(
+  courseId: string,
+  input: { employeeIds: string[]; dueDate: string },
+  actor: AuditActor,
+): Promise<{
+  courseId: string;
+  dueDate: string;
+  updatedCount: number;
+}> {
+  const employeeIds = Array.from(new Set(input.employeeIds));
+
+  return db.transaction(async (tx) => {
+    const [course] = await tx
+      .select({
+        id: trainingCourses.id,
+        titleEn: trainingCourses.titleEn,
+      })
+      .from(trainingCourses)
+      .where(eq(trainingCourses.id, courseId))
+      .limit(1);
+
+    if (!course) {
+      throw new ApiError('Training course not found', 404, true, '', {
+        code: 'COURSE_NOT_FOUND',
+      });
+    }
+
+    // Snapshot the rows the UPDATE will touch — the audit entries' "from".
+    const beforeRows = await tx
+      .select({
+        employeeId: trainingCourseAssignments.employeeId,
+        dueDate: trainingCourseAssignments.dueDate,
+        employeeName: employees.name,
+      })
+      .from(trainingCourseAssignments)
+      .innerJoin(
+        employees,
+        eq(trainingCourseAssignments.employeeId, employees.id),
+      )
+      .where(
+        and(
+          eq(trainingCourseAssignments.courseId, courseId),
+          inArray(trainingCourseAssignments.employeeId, employeeIds),
+        ),
+      );
+
+    if (beforeRows.length === 0) {
+      throw new ApiError(
+        'No assignments found for the selected employees',
+        404,
+        true,
+        '',
+        {
+          code: 'ASSIGNMENTS_NOT_FOUND',
+        },
+      );
+    }
+
+    await tx
+      .update(trainingCourseAssignments)
+      .set({ dueDate: input.dueDate })
+      .where(
+        and(
+          eq(trainingCourseAssignments.courseId, courseId),
+          inArray(
+            trainingCourseAssignments.employeeId,
+            beforeRows.map((row) => row.employeeId),
+          ),
+        ),
+      );
+
+    let updatedCount = 0;
+    for (const row of beforeRows) {
+      if (row.dueDate === input.dueDate) continue; // Already that date — nothing moved.
+      updatedCount += 1;
+      await recordAudit({
+        actor,
+        executor: tx,
+        itemType: 'assignment',
+        itemId: row.employeeId,
+        itemName: `${row.employeeName} · ${course.titleEn}`,
+        action: 'update',
+        changes: { dueDate: { from: row.dueDate, to: input.dueDate } },
+      });
+    }
+
+    logger.info(
+      `Due date for course "${course.titleEn}" (${courseId}) changed to ${input.dueDate} for ${beforeRows.length} assignments`,
+    );
+
+    return {
+      courseId,
+      dueDate: input.dueDate,
+      updatedCount,
     };
   });
 }

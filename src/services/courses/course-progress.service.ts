@@ -51,7 +51,7 @@ export async function getCourseProgress(courseId: string, employeeId: string) {
   if (!assignment.isRequired) {
     const requiredTraining =
       await getEmployeeRequiredTrainingStatus(employeeId);
-    if (!requiredTraining.isComplete && !requiredTraining.isOverridden) {
+    if (requiredTraining.isRestricted) {
       throw new ApiError(
         'Complete required training before opening other courses',
         403,
@@ -103,7 +103,7 @@ export async function completeCurrentChapter(
     if (!assignment.isRequired) {
       const requiredTraining =
         await getEmployeeRequiredTrainingStatus(employeeId);
-      if (!requiredTraining.isComplete && !requiredTraining.isOverridden) {
+      if (requiredTraining.isRestricted) {
         throw new ApiError(
           'Complete required training before opening other courses',
           403,

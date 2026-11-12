@@ -17,6 +17,7 @@ import {
   getTrainingProgress,
   grantTrainingOverride,
   revokeTrainingOverride,
+  updateCourseAssignments,
 } from '../../controllers/v1/courses.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
@@ -100,6 +101,13 @@ coursesRoute.post(
   requireAuth,
   requireRoles(['super_admin']),
   unassignCourse,
+);
+
+coursesRoute.patch(
+  '/:id/assignments',
+  requireAuth,
+  requireRoles(['super_admin']),
+  updateCourseAssignments,
 );
 
 coursesRoute.patch(

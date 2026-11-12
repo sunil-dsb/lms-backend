@@ -8,6 +8,7 @@ import {
   updateCourseInputSchema,
   assignCourseInputSchema,
   unassignCourseInputSchema,
+  updateDueDateInputSchema,
   type TrainingCourseStatus,
 } from '../../db/index.ts';
 import * as coursesService from '../../services/courses/courses.service.ts';
@@ -337,6 +338,38 @@ export const unassignCourse = catchAsync(
       .status(200)
       .json(
         ApiResponse.success('Training course unassigned successfully', result),
+      );
+  },
+);
+
+// PATCH /api/v1/courses/:id/assignments — retime due dates on existing rows.
+export const updateCourseAssignments = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const idValidation = uuidParamSchema.safeParse(req.params.id);
+    if (!idValidation.success) {
+      throw new ApiError('Invalid course id format', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+
+    const parsed = updateDueDateInputSchema.safeParse({
+      employeeIds: req.body?.employeeIds,
+      dueDate: req.body?.dueDate,
+    });
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const result = await courseAssignmentsService.updateAssignmentDueDates(
+      idValidation.data,
+      parsed.data,
+      { userId: req.userId, name: req.user?.name },
+    );
+
+    res
+      .status(200)
+      .json(
+        ApiResponse.success('Assignment due date updated successfully', result),
       );
   },
 );

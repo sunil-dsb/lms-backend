@@ -113,3 +113,17 @@ export const unassignCourseInputSchema = z.object({
     .min(1, 'At least one employee ID is required'),
 });
 export type UnassignCourseInput = z.infer<typeof unassignCourseInputSchema>;
+
+/**
+ * Retimes existing assignments: same date rules as assign (format only, so a
+ * past due date stays expressible — useful for making something overdue).
+ */
+export const updateDueDateInputSchema = z.object({
+  employeeIds: z
+    .array(z.string().uuid())
+    .min(1, 'At least one employee ID is required'),
+  dueDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format (YYYY-MM-DD)'),
+});
+export type UpdateDueDateInput = z.infer<typeof updateDueDateInputSchema>;
