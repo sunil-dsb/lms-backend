@@ -77,6 +77,7 @@ export async function completeCurrentChapter(
   return db.transaction(async (tx) => {
     const [assignment] = await tx
       .select({
+        id: trainingCourseAssignments.id,
         currentChapterId: trainingCourseAssignments.currentChapterId,
         courseCompletedAt: trainingCourseAssignments.courseCompletedAt,
         isRequired: trainingCourseAssignments.isRequired,
@@ -116,12 +117,35 @@ export async function completeCurrentChapter(
         );
       }
     }
-    if (assignment.courseCompletedAt || !assignment.currentChapterId) {
+    if (assignment.courseCompletedAt) {
       throw new ApiError('Course is already complete', 409, true, '', {
         code: 'COURSE_ALREADY_COMPLETE',
       });
     }
-    if (assignment.currentChapterId !== chapterId) {
+
+    let activeChapterId = assignment.currentChapterId;
+    if (!activeChapterId) {
+      const [firstCh] = await tx
+        .select({ id: trainingChapters.id })
+        .from(trainingChapters)
+        .where(eq(trainingChapters.courseId, courseId))
+        .orderBy(asc(trainingChapters.number))
+        .limit(1);
+      activeChapterId = firstCh?.id ?? null;
+      if (activeChapterId) {
+        await tx
+          .update(trainingCourseAssignments)
+          .set({ currentChapterId: activeChapterId })
+          .where(
+            and(
+              eq(trainingCourseAssignments.courseId, courseId),
+              eq(trainingCourseAssignments.employeeId, employeeId),
+            ),
+          );
+      }
+    }
+
+    if (activeChapterId && activeChapterId !== chapterId) {
       throw new ApiError('This is not the current chapter', 409, true, '', {
         code: 'CHAPTER_NOT_IN_PROGRESS',
       });
@@ -170,7 +194,6 @@ export async function completeCurrentChapter(
         and(
           eq(trainingCourseAssignments.courseId, courseId),
           eq(trainingCourseAssignments.employeeId, employeeId),
-          eq(trainingCourseAssignments.currentChapterId, chapterId),
         ),
       );
 

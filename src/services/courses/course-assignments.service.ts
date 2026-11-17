@@ -832,8 +832,11 @@ export async function getEmployeeTrainingCourse(
     });
   }
   const chapters = course.chapters.map(chapterDisplayData);
+  const effectiveCurrentChapterId =
+    assignment.currentChapterId ??
+    (assignment.courseCompletedAt ? null : (chapters[0]?.id ?? null));
   const currentIndex = chapters.findIndex(
-    (chapter) => chapter.id === assignment.currentChapterId,
+    (chapter) => chapter.id === effectiveCurrentChapterId,
   );
   const completedChapterCount = assignment.courseCompletedAt
     ? chapters.length
@@ -868,7 +871,7 @@ export async function getEmployeeTrainingCourse(
       id: assignment.id,
       dueDate: assignment.dueDate,
       assignedAt: assignment.assignedAt,
-      currentChapterId: assignment.currentChapterId,
+      currentChapterId: effectiveCurrentChapterId,
       courseCompletedAt: assignment.courseCompletedAt,
       completedChapterCount,
       totalChapters: chapters.length,

@@ -507,6 +507,26 @@ export async function updateCourse(
         }));
 
         await tx.insert(trainingChapters).values(chapterValues);
+
+        const [firstCh] = await tx
+          .select({ id: trainingChapters.id })
+          .from(trainingChapters)
+          .where(eq(trainingChapters.courseId, id))
+          .orderBy(asc(trainingChapters.number))
+          .limit(1);
+
+        if (firstCh) {
+          await tx
+            .update(trainingCourseAssignments)
+            .set({ currentChapterId: firstCh.id })
+            .where(
+              and(
+                eq(trainingCourseAssignments.courseId, id),
+                isNull(trainingCourseAssignments.courseCompletedAt),
+                isNull(trainingCourseAssignments.currentChapterId),
+              ),
+            );
+        }
       }
 
       chapterChanges = diffChapterSet(beforeChapters, input.chapters);
