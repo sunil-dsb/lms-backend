@@ -9,6 +9,7 @@ import {
   archiveProcedure,
   unarchiveProcedure,
   updateProcedure,
+  updateProcedurePromo,
   deleteProcedure,
   getAssignedProcedures,
   importProcedure,
@@ -88,6 +89,13 @@ proceduresRoute.patch(
   requireAuth,
   requireRoles(['super_admin']),
   updateProcedureStations,
+);
+
+proceduresRoute.patch(
+  '/:id/promo',
+  requireAuth,
+  requireRoles(['super_admin']),
+  updateProcedurePromo,
 );
 
 // Archive / unarchive / publish (super_admin only)
