@@ -10,6 +10,7 @@ import {
   count,
   ilike,
   or,
+  ne,
 } from 'drizzle-orm';
 import {
   formatPaginatedResult,
@@ -512,7 +513,10 @@ export async function updateProcedure(
           ? new Date(input.promoStartsAt)
           : null,
       }),
-      ...(input.status !== undefined && { status: input.status }),
+      ...(input.status !== undefined && {
+        status: input.status,
+        previousStatus: null,
+      }),
       ...(bodyEn !== undefined && { blocksEn: bodyEn }),
       ...(bodyEs !== undefined && { blocksEs: bodyEs }),
       updatedAt: new Date(),
@@ -573,6 +577,32 @@ export async function updateProcedure(
   return pub;
 }
 
+/**
+ * Automatically archives promo dishes whose expiration date has passed.
+ * Once archived, they are no longer visible on the kitchen floor or to employees.
+ */
+export async function autoArchiveExpiredPromos(): Promise<void> {
+  try {
+    await db
+      .update(procedures)
+      .set({
+        previousStatus: sql`coalesce(${procedures.status}, 'published')`,
+        status: 'archived',
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(procedures.isPromo, true),
+          sql`${procedures.promoExpiresAt} IS NOT NULL`,
+          sql`${procedures.promoExpiresAt} <= NOW()`,
+          sql`${procedures.status} != 'archived'`,
+        ),
+      );
+  } catch (err) {
+    logger.error({ err }, 'Failed to auto-archive expired promo dishes');
+  }
+}
+
 /** Admin-only list of procedures. Newest first. Optionally filtered by:
  *  - `status`         – 'draft' | 'published'
  *  - `stationIds`     – one or more station UUIDs (OR semantics)
@@ -599,10 +629,16 @@ export async function listProcedures(
   page: number = 1,
   limit: number = 10,
 ): Promise<PaginatedResult<PublicProcedure>> {
+  // 1. Auto-archive any expired promo dishes
+  await autoArchiveExpiredPromos();
+
   const conditions: SQL[] = [];
 
   if (filter.status) {
     conditions.push(eq(procedures.status, filter.status));
+  } else if (filter.assignedEmployeeId) {
+    // Non-admin employee views must never include archived procedures
+    conditions.push(ne(procedures.status, 'archived'));
   }
 
   if (filter.isPromo !== undefined) {
@@ -612,9 +648,9 @@ export async function listProcedures(
   if (filter.assignedEmployeeId) {
     const empId = filter.assignedEmployeeId;
     const hasStations = filter.stationIds && filter.stationIds.length > 0;
-    const userMatch = sql`${procedures.assignUsers} && ARRAY[${empId}::uuid]`;
+    const userMatch = sql`coalesce(${procedures.assignUsers}, ARRAY[]::uuid[]) && ARRAY[${empId}::uuid]`;
     const stationMatch = hasStations
-      ? sql`${procedures.stationIds} && ARRAY[${sql.join(
+      ? sql`coalesce(${procedures.stationIds}, ARRAY[]::uuid[]) && ARRAY[${sql.join(
           filter.stationIds!.map((id) => sql`${id}::uuid`),
           sql`, `,
         )}]`
@@ -633,14 +669,12 @@ export async function listProcedures(
       // station-based visibility; a newly saved empty array means nobody is
       // selected and must not widen visibility to the whole station.
       const visibilityMatches: SQL[] = [userMatch];
+      // Active published promo dishes are featured kitchen-wide for staff
+      visibilityMatches.push(sql`${procedures.isPromo} = true`);
       if (stationMatch) {
         // Non-promo rows: station overlap as before.
         visibilityMatches.push(
           sql`${procedures.isPromo} = false AND ${stationMatch}`,
-        );
-        // Legacy promos with NULL employee assignment: station overlap.
-        visibilityMatches.push(
-          sql`${procedures.isPromo} = true AND ${procedures.assignUsers} IS NULL AND ${stationMatch}`,
         );
       }
       const kitchenWideMatch = sql`${procedures.isPromo} = false AND coalesce(array_length(${procedures.stationIds}, 1), 0) = 0`;
@@ -772,12 +806,36 @@ export async function getProcedureBySlug(
     .limit(1);
   if (!row) return null;
 
-  const pub = publicProcedure({ ...row.proc, subcategory: row.subcategory });
+  // Auto-archive promo dish if expired
+  if (
+    row.proc.isPromo &&
+    row.proc.promoExpiresAt &&
+    new Date(row.proc.promoExpiresAt).getTime() <= Date.now() &&
+    row.proc.status !== 'archived'
+  ) {
+    const now = new Date();
+    await db
+      .update(procedures)
+      .set({
+        previousStatus: row.proc.status,
+        status: 'archived',
+        updatedAt: now,
+      })
+      .where(eq(procedures.id, row.proc.id));
+    row.proc.status = 'archived';
+  }
 
   const isAdmin =
     Boolean(actor?.isSuperAdmin) ||
     actor?.role === 'super_admin' ||
     actor?.role === 'manager';
+
+  // Archived procedures are not visible to regular employees
+  if (!isAdmin && row.proc.status === 'archived') {
+    return null;
+  }
+
+  const pub = publicProcedure({ ...row.proc, subcategory: row.subcategory });
 
   if (isAdmin) {
     pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
@@ -968,6 +1026,108 @@ export async function updateProcedureStations(
   }
 
   return publicProcedure({ ...row.proc, subcategory: row.subcategory });
+}
+
+export interface UpdateProcedurePromoInput {
+  isPromo: boolean;
+  promoStartsAt?: string | null | undefined;
+  promoExpiresAt?: string | null | undefined;
+  promoAudience?: 'station' | 'everyone' | undefined;
+  assignUsers?: string[] | undefined;
+  stationIds?: string[] | undefined;
+}
+
+export async function updateProcedurePromo(
+  id: string,
+  input: UpdateProcedurePromoInput,
+  actor: AuditActor,
+): Promise<PublicProcedure> {
+  const [existing] = await db
+    .select({ proc: procedures, subcategory: subcategories })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+
+  if (input.stationIds && input.stationIds.length > 0) {
+    const st = await db
+      .select({ id: stations.id })
+      .from(stations)
+      .where(inArray(stations.id, input.stationIds));
+    if (st.length !== input.stationIds.length) {
+      throw Object.assign(new ApiError('Station not found', 404), {
+        errorCode: 'STATION_NOT_FOUND',
+      });
+    }
+  }
+
+  if (input.assignUsers && input.assignUsers.length > 0) {
+    await assertValidAssignedEmployees(input.assignUsers);
+  }
+
+  const now = new Date();
+  await db
+    .update(procedures)
+    .set({
+      isPromo: input.isPromo,
+      promoStartsAt:
+        input.isPromo && input.promoStartsAt
+          ? new Date(input.promoStartsAt)
+          : null,
+      promoExpiresAt:
+        input.isPromo && input.promoExpiresAt
+          ? new Date(input.promoExpiresAt)
+          : null,
+      promoAudience: input.isPromo
+        ? (input.promoAudience ?? 'station')
+        : 'station',
+      assignUsers:
+        input.isPromo && input.assignUsers ? input.assignUsers : null,
+      ...(input.stationIds !== undefined && {
+        stationIds: input.stationIds.length > 0 ? input.stationIds : null,
+      }),
+      updatedAt: now,
+    })
+    .where(eq(procedures.id, id));
+
+  const [row] = await db
+    .select({ proc: procedures, subcategory: subcategories })
+    .from(procedures)
+    .leftJoin(subcategories, eq(subcategories.id, procedures.subcategoryId))
+    .where(eq(procedures.id, id))
+    .limit(1);
+
+  if (!row) {
+    throw Object.assign(new ApiError('Procedure not found', 404), {
+      errorCode: 'NOT_FOUND',
+    });
+  }
+
+  await recordAudit({
+    actor,
+    itemType: 'procedure',
+    itemId: id,
+    itemName: row.proc.titleEn,
+    action: 'update',
+    changes: {
+      isPromo: {
+        from: existing.proc.isPromo,
+        to: row.proc.isPromo,
+      },
+    },
+  });
+
+  const pub = publicProcedure({ ...row.proc, subcategory: row.subcategory });
+  if (row.proc.assignUsers && row.proc.assignUsers.length > 0) {
+    pub.assignUsers = await resolveAssignedUsers(row.proc.assignUsers);
+  }
+  return pub;
 }
 
 /** Publish a procedure (draft → published).

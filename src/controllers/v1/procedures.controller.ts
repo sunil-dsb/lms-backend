@@ -344,6 +344,42 @@ export const updateProcedureStations = catchAsync(
   },
 );
 
+const updatePromoSchema = z.object({
+  isPromo: z.boolean(),
+  promoStartsAt: z.string().nullable().optional(),
+  promoExpiresAt: z.string().nullable().optional(),
+  promoAudience: z.enum(['station', 'everyone']).optional(),
+  assignUsers: z.array(z.string().uuid()).optional(),
+  stationIds: z.array(z.string().uuid()).optional(),
+});
+
+export const updateProcedurePromo = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const id = req.params.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new ApiError('Missing procedure id', 400, true, '', {
+        code: 'INVALID_INPUT',
+      });
+    }
+    const parsed = updatePromoSchema.safeParse(req.body);
+    if (!parsed.success) throw parsed.error;
+
+    const procedure = await proceduresService.updateProcedurePromo(
+      id,
+      parsed.data,
+      {
+        userId: req.userId,
+        name: req.user?.name,
+      },
+    );
+    res.status(200).json(
+      ApiResponse.success('Procedure promo settings updated successfully', {
+        procedure,
+      }),
+    );
+  },
+);
+
 // POST /api/v1/procedures/:id/archive  (super_admin only — auth enforced by middleware)
 export const archiveProcedure = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
