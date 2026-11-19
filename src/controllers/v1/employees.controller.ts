@@ -180,6 +180,9 @@ export const deactivate = catchAsync(
 );
 
 // ---------- POST /api/admin/employees/:id/reactivate ----------------------
+// Reactivation removed — an employee can only be pending, active or
+// deactivated; once deactivated there is no path back to active.
+/*
 export const reactivate = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const param = idParam.safeParse(req.params);
@@ -227,6 +230,7 @@ export const reactivate = catchAsync(
     );
   },
 );
+*/
 
 // ---------- GET /api/admin/employees?status=... ----------------------------
 export const listEmployees = catchAsync(

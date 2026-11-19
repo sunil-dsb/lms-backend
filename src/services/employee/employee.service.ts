@@ -48,7 +48,7 @@ export async function sendInviteMagicLink(input: {
       email: input.email,
       name: input.name,
       newUserCallbackURL: `${frontendUrl}/${input.languagePref}/set-password`,
-      callbackURL: `${frontendUrl}/${input.languagePref}/dashboard`,
+      callbackURL: `${frontendUrl}/${input.languagePref}/set-password`,
     },
     headers: new Headers({ 'Content-Type': 'application/json' }),
   });

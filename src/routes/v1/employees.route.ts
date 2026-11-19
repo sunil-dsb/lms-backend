@@ -17,6 +17,7 @@ employeesRoute.post('/', employeesController.createEmployee);
 employeesRoute.patch('/:id', employeesController.updateEmployee);
 employeesRoute.post('/:id/invites', employeesController.resendInvite);
 employeesRoute.post('/:id/deactivate', employeesController.deactivate);
-employeesRoute.post('/:id/reactivate', employeesController.reactivate);
+// Reactivation removed — a deactivated employee stays deactivated.
+// employeesRoute.post('/:id/reactivate', employeesController.reactivate);
 
 export default employeesRoute;
