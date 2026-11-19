@@ -218,8 +218,19 @@ function questionLabel(raw: unknown): string {
   if (!raw || typeof raw !== 'object') return '';
   const q = raw as Record<string, unknown>;
 
-  const prompt = firstText(q.question) ?? 'Question';
+  const prompt = firstText(q.question) ?? firstText(q.prompt) ?? 'Question';
   const head = clip(prompt, QUESTION_LABEL_MAX);
+
+  if (q.type === 'sequence') {
+    const items = Array.isArray(q.sequenceItems) ? q.sequenceItems : [];
+    const seqParts: string[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i] as Record<string, unknown>;
+      const label = firstText(item?.label) ?? `Step ${i + 1}`;
+      seqParts.push(`${i + 1}. ${clip(label, CHOICE_LABEL_MAX)}`);
+    }
+    return seqParts.length > 0 ? `${head} (Seq: ${seqParts.join(' → ')})` : head;
+  }
 
   const choices = Array.isArray(q.choices) ? q.choices : [];
   const parts: string[] = [];

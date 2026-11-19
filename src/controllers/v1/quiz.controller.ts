@@ -5,6 +5,8 @@ import ApiError from '../../shared/utils/ApiError.ts';
 import {
   createQuizInputSchema,
   updateQuizInputSchema,
+  checkAnswerInputSchema,
+  checkBatchAnswersInputSchema,
 } from '../../db/quiz.schema.ts';
 import * as quizzesService from '../../services/quiz/quiz.service.ts';
 import { getPaginationParams } from '../../shared/utils/pagination.ts';
@@ -116,5 +118,52 @@ export const deleteQuiz = catchAsync(
     });
 
     res.status(200).json(ApiResponse.success('Quiz deleted successfully'));
+  },
+);
+
+// POST /api/v1/quizzes/:id/check-answer (accessible by any authenticated employee)
+export const checkAnswer = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const quizId = Array.isArray(id) ? id[0] : id;
+    if (!quizId) {
+      throw new ApiError('Quiz ID is required', 400);
+    }
+
+    const parsed = checkAnswerInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const result = await quizzesService.checkQuizAnswer(quizId, parsed.data);
+
+    res
+      .status(200)
+      .json(ApiResponse.success('Answer checked successfully', result));
+  },
+);
+
+// POST /api/v1/quizzes/:id/check-answers (Batch check all quiz questions in 1 call)
+export const checkBatchAnswers = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+    const quizId = Array.isArray(id) ? id[0] : id;
+    if (!quizId) {
+      throw new ApiError('Quiz ID is required', 400);
+    }
+
+    const parsed = checkBatchAnswersInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    const result = await quizzesService.checkQuizBatchAnswers(
+      quizId,
+      parsed.data,
+    );
+
+    res
+      .status(200)
+      .json(ApiResponse.success('Answers checked successfully', result));
   },
 );

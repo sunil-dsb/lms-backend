@@ -12,6 +12,8 @@ import {
   createQuizInputSchema,
   type UpdateQuizInput,
   updateQuizInputSchema,
+  type CheckAnswerInput,
+  type CheckBatchAnswersInput,
   type Quiz,
   type QuizWithProcedure,
   type QuizProcedureSummary,
@@ -290,4 +292,214 @@ export async function deleteQuiz(id: string, actor: AuditActor): Promise<void> {
     action: 'delete',
     changes: { name: { from: existing.nameEn, to: null } },
   });
+}
+
+export async function checkQuizAnswer(
+  quizOrProcedureId: string,
+  input: CheckAnswerInput,
+): Promise<{
+  questionId: string;
+  isCorrect: boolean;
+  type: 'sequence' | 'multiple_choice';
+  totalSteps?: number;
+}> {
+  // First look for quiz by ID
+  let targetQuiz: Quiz | undefined;
+
+  const [foundById] = await db
+    .select()
+    .from(quiz)
+    .where(eq(quiz.id, quizOrProcedureId))
+    .limit(1);
+
+  if (foundById) {
+    targetQuiz = foundById;
+  } else {
+    // If not found by quiz ID, check if it's a procedure ID that has a quizId
+    const [proc] = await db
+      .select({ quizId: procedures.quizId })
+      .from(procedures)
+      .where(eq(procedures.id, quizOrProcedureId))
+      .limit(1);
+
+    if (proc?.quizId) {
+      const [linkedQuiz] = await db
+        .select()
+        .from(quiz)
+        .where(eq(quiz.id, proc.quizId))
+        .limit(1);
+      targetQuiz = linkedQuiz;
+    }
+  }
+
+  if (!targetQuiz) {
+    throw Object.assign(new ApiError('Quiz not found', 404), {
+      errorCode: 'QUIZ_NOT_FOUND',
+    });
+  }
+
+  const rawQuestions = Array.isArray(targetQuiz.questions)
+    ? (targetQuiz.questions as Array<Record<string, any>>)
+    : [];
+
+  const foundQuestion = rawQuestions.find(
+    (q) => String(q.id) === String(input.questionId),
+  );
+
+  if (!foundQuestion) {
+    throw Object.assign(new ApiError('Question not found in quiz', 404), {
+      errorCode: 'QUESTION_NOT_FOUND',
+    });
+  }
+
+  const qType = foundQuestion.type || 'multiple_choice';
+
+  if (qType === 'sequence') {
+    const sequenceItems = Array.isArray(foundQuestion.sequenceItems)
+      ? foundQuestion.sequenceItems
+      : [];
+    const correctOrder = sequenceItems.map((item: any) => String(item.id));
+    const submittedOrder = Array.isArray(input.sequenceOrder)
+      ? input.sequenceOrder.map(String)
+      : [];
+
+    const isCorrect =
+      submittedOrder.length === correctOrder.length &&
+      submittedOrder.length > 0 &&
+      submittedOrder.every((id, idx) => id === correctOrder[idx]);
+
+    return {
+      questionId: input.questionId,
+      isCorrect,
+      type: 'sequence',
+      totalSteps: correctOrder.length,
+    };
+  }
+
+  // Multiple choice
+  const isCorrect = Boolean(
+    input.choiceId &&
+      foundQuestion.correctChoiceId &&
+      String(input.choiceId) === String(foundQuestion.correctChoiceId),
+  );
+
+  return {
+    questionId: input.questionId,
+    isCorrect,
+    type: 'multiple_choice',
+  };
+}
+
+export async function checkQuizBatchAnswers(
+  quizOrProcedureId: string,
+  input: CheckBatchAnswersInput,
+): Promise<{
+  score: number;
+  total: number;
+  results: Array<{
+    questionId: string;
+    isCorrect: boolean;
+    type: 'sequence' | 'multiple_choice';
+  }>;
+}> {
+  let targetQuiz: Quiz | undefined;
+
+  const [foundById] = await db
+    .select()
+    .from(quiz)
+    .where(eq(quiz.id, quizOrProcedureId))
+    .limit(1);
+
+  if (foundById) {
+    targetQuiz = foundById;
+  } else {
+    const [proc] = await db
+      .select({ quizId: procedures.quizId })
+      .from(procedures)
+      .where(eq(procedures.id, quizOrProcedureId))
+      .limit(1);
+
+    if (proc?.quizId) {
+      const [linkedQuiz] = await db
+        .select()
+        .from(quiz)
+        .where(eq(quiz.id, proc.quizId))
+        .limit(1);
+      targetQuiz = linkedQuiz;
+    }
+  }
+
+  if (!targetQuiz) {
+    throw Object.assign(new ApiError('Quiz not found', 404), {
+      errorCode: 'QUIZ_NOT_FOUND',
+    });
+  }
+
+  const rawQuestions = Array.isArray(targetQuiz.questions)
+    ? (targetQuiz.questions as Array<Record<string, any>>)
+    : [];
+
+  const results: Array<{
+    questionId: string;
+    isCorrect: boolean;
+    type: 'sequence' | 'multiple_choice';
+  }> = [];
+
+  for (const item of input.answers) {
+    const foundQuestion = rawQuestions.find(
+      (q) => String(q.id) === String(item.questionId),
+    );
+
+    if (!foundQuestion) {
+      results.push({
+        questionId: item.questionId,
+        isCorrect: false,
+        type: 'multiple_choice',
+      });
+      continue;
+    }
+
+    const qType = foundQuestion.type || 'multiple_choice';
+
+    if (qType === 'sequence') {
+      const sequenceItems = Array.isArray(foundQuestion.sequenceItems)
+        ? foundQuestion.sequenceItems
+        : [];
+      const correctOrder = sequenceItems.map((s: any) => String(s.id));
+      const submittedOrder = Array.isArray(item.sequenceOrder)
+        ? item.sequenceOrder.map(String)
+        : [];
+
+      const isCorrect =
+        submittedOrder.length === correctOrder.length &&
+        submittedOrder.length > 0 &&
+        submittedOrder.every((id, idx) => id === correctOrder[idx]);
+
+      results.push({
+        questionId: item.questionId,
+        isCorrect,
+        type: 'sequence',
+      });
+    } else {
+      const isCorrect = Boolean(
+        item.choiceId &&
+          foundQuestion.correctChoiceId &&
+          String(item.choiceId) === String(foundQuestion.correctChoiceId),
+      );
+
+      results.push({
+        questionId: item.questionId,
+        isCorrect,
+        type: 'multiple_choice',
+      });
+    }
+  }
+
+  const score = results.filter((r) => r.isCorrect).length;
+
+  return {
+    score,
+    total: results.length,
+    results,
+  };
 }
