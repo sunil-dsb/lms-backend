@@ -83,9 +83,17 @@ export const updateProcedure = catchAsync(
 export const getAllProcedures = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const { page, limit, search } = getPaginationParams(req.query);
+    const isPromo =
+      req.query.isPromo === 'true'
+        ? true
+        : req.query.isPromo === 'false'
+          ? false
+          : req.query.scope === 'promos'
+            ? true
+            : undefined;
 
     const paginatedResult = await proceduresService.listProcedures(
-      { search },
+      { search, isPromo },
       page,
       limit,
     );
@@ -110,6 +118,14 @@ export const getAssignedProcedures = catchAsync(
     const { page, limit, search } = getPaginationParams(req.query);
     const stationIds = req.employee?.stationIds || [];
     const scope = typeof req.query.scope === 'string' ? req.query.scope : 'all';
+    const isPromo =
+      req.query.isPromo === 'true'
+        ? true
+        : req.query.isPromo === 'false'
+          ? false
+          : req.query.scope === 'promos'
+            ? true
+            : undefined;
     const categoryId =
       typeof req.query.categoryId === 'string' &&
       req.query.categoryId.trim().length > 0
@@ -127,6 +143,7 @@ export const getAssignedProcedures = catchAsync(
           ? req.employee?.id || undefined
           : undefined,
         scope,
+        isPromo,
         categoryIds: categoryId ? [categoryId] : undefined,
         search,
       },
@@ -218,9 +235,19 @@ export const filterProcedures = catchAsync(
         ? rawType.trim().slice(0, 100)
         : undefined;
 
+    const isPromo =
+      req.query.isPromo === 'true'
+        ? true
+        : req.query.isPromo === 'false'
+          ? false
+          : req.query.scope === 'promos'
+            ? true
+            : undefined;
+
     const paginatedResult = await proceduresService.listProcedures(
       {
         status,
+        isPromo,
         stationIds,
         subcategoryIds,
         categoryIds,
