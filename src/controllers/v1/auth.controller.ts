@@ -2,7 +2,15 @@ import type { Request, Response } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
 import { eq, and, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees, user, account, stations, jobs } from '../../db/index.ts';
+import {
+  employees,
+  user,
+  account,
+  session,
+  stations,
+  jobs,
+  verification,
+} from '../../db/index.ts';
 import { auth } from '../../config/auth.ts';
 import {
   loginUser,
@@ -251,6 +259,9 @@ export const setPassword = catchAsync(
           .where(inArray(jobs.id, updated.jobIds));
       }
 
+      // Clear/revoke the magic link session so user logs in manually with their new password
+      await db.delete(session).where(eq(session.userId, userId!));
+
       const cleanEmployee = publicEmployee(updated!);
 
       return void res.status(200).json(
@@ -260,7 +271,7 @@ export const setPassword = catchAsync(
             stations: stationDetails,
             jobs: jobDetails,
           },
-          redirectTo: `/${updated!.languagePref}/employee/home`,
+          redirectTo: `/${updated!.languagePref}/login?status=password_set&email=${encodeURIComponent(updated!.email)}`,
         }),
       );
     }
@@ -319,6 +330,9 @@ export const setPassword = catchAsync(
         .where(inArray(jobs.id, updated.jobIds));
     }
 
+    // Clear/revoke the magic link session so user logs in manually with their new password
+    await db.delete(session).where(eq(session.userId, userId));
+
     const cleanEmployee = publicEmployee(updated!);
 
     res.status(200).json(
@@ -328,7 +342,7 @@ export const setPassword = catchAsync(
           stations: stationDetails,
           jobs: jobDetails,
         },
-        redirectTo: `/${updated!.languagePref}/employee/home`,
+        redirectTo: `/${updated!.languagePref}/login?status=password_set&email=${encodeURIComponent(updated!.email)}`,
       }),
     );
   },
@@ -340,15 +354,69 @@ export const setPassword = catchAsync(
 export const verifyInvite = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const { lang, token } = req.params;
-    if (!token || !lang) {
+    if (
+      !token ||
+      !lang ||
+      typeof token !== 'string' ||
+      typeof lang !== 'string'
+    ) {
       res.status(400).send('Missing language or token');
       return;
     }
 
     const betterAuthBaseUrl = config.betterAuthUrl || 'http://localhost:8000';
-    const callbackURL = encodeURIComponent(
-      `${config.frontendBaseUrl}/${lang}/employee/home`,
-    );
+    let targetCallback = `${config.frontendBaseUrl}/${lang}/set-password`;
+
+    // Check employee status linked to this verification token
+    try {
+      const [ver] = await db
+        .select({ value: verification.value })
+        .from(verification)
+        .where(eq(verification.identifier, token))
+        .limit(1);
+
+      if (ver) {
+        let email: string | undefined;
+        try {
+          const parsed = JSON.parse(ver.value);
+          email = parsed.email;
+        } catch {
+          const match = ver.value.match(/"email"\s*:\s*"([^"]+)"/);
+          if (match) email = match[1];
+        }
+
+        if (email) {
+          const [emp] = await db
+            .select({
+              status: employees.status,
+              requirePasswordChange: employees.requirePasswordChange,
+            })
+            .from(employees)
+            .where(eq(employees.email, email))
+            .limit(1);
+
+          if (emp) {
+            if (emp.status === 'deactivated') {
+              res.redirect(
+                `${config.frontendBaseUrl}/${lang}/login?error=account_deactivated`,
+              );
+              return;
+            }
+
+            // If employee is pending or requires password change, send to set-password
+            if (emp.status === 'pending' || emp.requirePasswordChange) {
+              targetCallback = `${config.frontendBaseUrl}/${lang}/set-password`;
+            } else if (emp.status === 'active') {
+              targetCallback = `${config.frontendBaseUrl}/${lang}/employee/home`;
+            }
+          }
+        }
+      }
+    } catch {
+      // Fallback defaults to /set-password
+    }
+
+    const callbackURL = encodeURIComponent(targetCallback);
     const newUserCallbackURL = encodeURIComponent(
       `${config.frontendBaseUrl}/${lang}/set-password`,
     );

@@ -22,13 +22,43 @@ export const quiz = pgTable('quiz', {
 export type Quiz = typeof quiz.$inferSelect;
 export type NewQuiz = typeof quiz.$inferInsert;
 
-const localisedString = z.object({
-  en: z.string().trim().min(1, 'English text cannot be empty'),
-  es: z.string().trim().optional(),
-});
+const localisedString = z
+  .object({
+    en: z.string().trim().optional(),
+    es: z.string().trim().optional(),
+  })
+  .refine((v) => Boolean(v.en?.trim() || v.es?.trim()), {
+    message: 'Text cannot be empty',
+  })
+  .transform((v) => ({
+    en: v.en?.trim() || v.es?.trim() || '',
+    es: v.es?.trim() || v.en?.trim() || '',
+  }));
+
+const localisedOptionalString = z
+  .object({
+    en: z.string().trim().optional(),
+    es: z.string().trim().optional(),
+  })
+  .optional()
+  .transform((v) => {
+    if (!v) return undefined;
+    const en = v.en?.trim() || '';
+    const es = v.es?.trim() || '';
+    if (!en && !es) return undefined;
+    return {
+      en: en || es,
+      es: es || en,
+    };
+  });
 
 export const quizChoiceSchema = z.object({
   id: z.string().trim().min(1, 'Choice ID is required'),
+  label: localisedString,
+});
+
+export const quizSequenceItemSchema = z.object({
+  id: z.string().trim().min(1, 'Item ID is required'),
   label: localisedString,
 });
 
@@ -40,21 +70,108 @@ export const quizQuestionSchema = z
       .min(1, 'Question ID cannot be empty')
       .optional()
       .default(() => crypto.randomUUID()),
-    question: localisedString,
-    choices: z
-      .array(quizChoiceSchema)
-      .min(2, 'Each question must have at least 2 choices/options'),
-    correctChoiceId: z
-      .string()
-      .trim()
-      .min(
-        1,
-        'A correct answer (correctChoiceId) is required for every question',
-      ),
+    type: z
+      .enum(['multiple_choice', 'sequence'])
+      .optional()
+      .default('multiple_choice'),
+    question: localisedOptionalString,
+    prompt: localisedOptionalString,
+    choices: z.array(quizChoiceSchema).optional(),
+    correctChoiceId: z.string().trim().optional(),
+    sequenceItems: z.array(quizSequenceItemSchema).optional(),
   })
-  .refine((q) => q.choices.some((c) => c.id === q.correctChoiceId), {
-    message: 'correctChoiceId must match one of the choices',
-    path: ['correctChoiceId'],
+  .superRefine((q, ctx) => {
+    const hasQuestion = Boolean(
+      q.question?.en?.trim() || q.question?.es?.trim(),
+    );
+    const hasPrompt = Boolean(q.prompt?.en?.trim() || q.prompt?.es?.trim());
+    if (!hasQuestion && !hasPrompt && q.type !== 'sequence') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Question prompt cannot be empty',
+        path: ['question'],
+      });
+    }
+
+    if (q.type === 'sequence') {
+      if (!Array.isArray(q.sequenceItems) || q.sequenceItems.length < 2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Sequence questions must have at least 2 steps in order',
+          path: ['sequenceItems'],
+        });
+      } else if (q.sequenceItems.length > 25) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Sequence questions cannot have more than 25 steps',
+          path: ['sequenceItems'],
+        });
+      } else {
+        const seenIds = new Set<string>();
+        const seenLabels = new Set<string>();
+        q.sequenceItems.forEach((item, idx) => {
+          if (item.id) {
+            if (seenIds.has(item.id)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `Duplicate step ID: ${item.id}`,
+                path: ['sequenceItems', idx, 'id'],
+              });
+            }
+            seenIds.add(item.id);
+          }
+          const en = (item.label?.en || '').trim().toLowerCase();
+          const es = (item.label?.es || '').trim().toLowerCase();
+          const key = `${en}|||${es}`;
+          if (key !== '|||') {
+            if (seenLabels.has(key)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `Step ${idx + 1} has duplicate text. Each step must have distinct instructions.`,
+                path: ['sequenceItems', idx, 'label'],
+              });
+            }
+            seenLabels.add(key);
+          }
+        });
+      }
+    } else {
+      if (!Array.isArray(q.choices) || q.choices.length < 2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Each question must have at least 2 choices/options',
+          path: ['choices'],
+        });
+      } else if (!q.correctChoiceId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'A correct answer (correctChoiceId) is required for every question',
+          path: ['correctChoiceId'],
+        });
+      } else if (!q.choices.some((c) => c.id === q.correctChoiceId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'correctChoiceId must match one of the choices',
+          path: ['correctChoiceId'],
+        });
+      }
+    }
+  })
+  .transform((q) => {
+    const defaultSeqPrompt = {
+      en: 'Arrange the following steps in the correct order:',
+      es: 'Organiza los siguientes pasos en el orden correcto:',
+    };
+    const prompt =
+      q.prompt ||
+      q.question ||
+      (q.type === 'sequence' ? defaultSeqPrompt : { en: '', es: '' });
+    return {
+      ...q,
+      prompt,
+      question: q.question || prompt,
+    };
   });
 
 export const createQuizInputSchema = z.object({
@@ -90,3 +207,17 @@ export type QuizWithProcedure = Quiz & {
   procedureId: string | null;
   procedure: QuizProcedureSummary | null;
 };
+
+export const checkAnswerInputSchema = z.object({
+  questionId: z.string().trim().min(1, 'Question ID is required'),
+  sequenceOrder: z.array(z.string().trim()).optional(),
+  choiceId: z.string().trim().optional(),
+});
+export type CheckAnswerInput = z.infer<typeof checkAnswerInputSchema>;
+
+export const checkBatchAnswersInputSchema = z.object({
+  answers: z.array(checkAnswerInputSchema),
+});
+export type CheckBatchAnswersInput = z.infer<
+  typeof checkBatchAnswersInputSchema
+>;

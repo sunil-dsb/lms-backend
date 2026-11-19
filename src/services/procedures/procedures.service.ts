@@ -641,8 +641,17 @@ export async function listProcedures(
     conditions.push(ne(procedures.status, 'archived'));
   }
 
-  if (filter.isPromo !== undefined) {
-    conditions.push(eq(procedures.isPromo, filter.isPromo));
+  if (filter.isPromo === true || filter.scope === 'promos') {
+    conditions.push(eq(procedures.isPromo, true));
+    // Must be currently active (started and not expired)
+    conditions.push(
+      sql`(${procedures.promoStartsAt} IS NULL OR ${procedures.promoStartsAt} <= NOW())`,
+    );
+    conditions.push(
+      sql`(${procedures.promoExpiresAt} IS NULL OR ${procedures.promoExpiresAt} > NOW())`,
+    );
+  } else if (filter.isPromo === false) {
+    conditions.push(eq(procedures.isPromo, false));
   }
 
   if (filter.assignedEmployeeId) {
@@ -658,6 +667,9 @@ export async function listProcedures(
 
     if (filter.scope === 'mine') {
       conditions.push(userMatch);
+    } else if (filter.scope === 'promos') {
+      // Active promo dishes are visible kitchen-wide for all staff
+      conditions.push(sql`${procedures.isPromo} = true`);
     } else {
       // Employees can see procedures assigned to them or their stations.
       // Unscoped, non-promo procedures are kitchen-wide.

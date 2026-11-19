@@ -29,13 +29,14 @@ The frontend is a separate app (Next.js style routes like `/{lang}/employee/home
 
 ## What the system does
 
-- **Employee onboarding by invite.** A super admin creates an employee. The system emails a magic link (via Resend). The employee clicks it, lands on a "set password" page, chooses a password, and the account becomes `active`.
-- **Login and sessions.** Email and password login backed by Better Auth. Sessions work with both an HttpOnly cookie and a Bearer token.
+- **Employee onboarding by invite.** A super admin creates an employee. The system emails a magic link (via Resend). The employee clicks it, lands on the `/set-password` page, sets a password, temporary session tokens are revoked, and the employee is prompted to sign in with their active account.
+- **Login and sessions.** Email and password login backed by Better Auth. Sessions work with both an HttpOnly cookie and a Bearer token. Deactivated employees are strictly gated from logging in.
 - **Password reset by OTP.** A 6 digit code is emailed and expires after 10 minutes.
 - **Organisation setup.** Locations (restaurants), stations (for example "Grill station"), and jobs (for example "Line Cook", each linked to a set of stations).
-- **Content library.** Categories and subcategories group content. Procedures are rich, block based documents stored in both English and Spanish. Each procedure can be linked to a subcategory, a station, a quiz, and a list of assigned employees, and moves through `draft`, `published`, and `archived`.
-- **Quizzes.** Simple multiple choice quizzes that can be attached to procedures.
-- **Media uploads.** Images, videos, and documents are uploaded to Cloudflare R2 (S3 compatible storage) and served from a public URL.
+- **Content library.** Categories and subcategories group content. Procedures are rich, block-based documents stored in both English and Spanish. Each procedure can be linked to a subcategory, a station, a quiz, and a list of assigned employees, and moves through `draft`, `published`, and `archived`.
+- **Promotional dishes.** Procedures can be scheduled as limited-time specials with `promoStartsAt` and `promoExpiresAt`. Active promo dishes are visible kitchen-wide, filterable via `GET /api/v1/procedures/assigned?scope=promos`, and automatically archived upon expiration.
+- **Quizzes & batch answer verification.** Quizzes support both standard Multiple Choice and Arrange in Sequence questions. The backend provides `POST /api/v1/quizzes/:id/check-answers` to evaluate all questions for a chapter in a single batch call.
+- **Media and document uploads.** Images, videos, and PDF documents are uploaded to Cloudflare R2 (S3 compatible storage) and served from a public URL.
 
 ---
 
@@ -315,8 +316,7 @@ New passwords need 8 or more characters with a lowercase letter, an uppercase le
 | POST   | `/`               | Create and send invite. Returns `{ employee, inviteUrl }`     |
 | PUT    | `/:id`            | Full update                                                   |
 | POST   | `/:id/invites`    | Resend invite (pending employees only)                        |
-| POST   | `/:id/deactivate` | Sets `deactivated` and deletes all their sessions             |
-| POST   | `/:id/reactivate` | Sets back to `active`                                         |
+| POST   | `/:id/deactivate` | Sets `deactivated` and deletes all their sessions (deactivated accounts remain inactive) |
 
 ### Locations, stations - `/api/v1/locations`, `/api/v1/stations` (super_admin)
 
@@ -353,18 +353,26 @@ New passwords need 8 or more characters with a lowercase letter, an uppercase le
 
 | Method | Path             | Access      | Notes                                                                                         |
 | ------ | ---------------- | ----------- | --------------------------------------------------------------------------------------------- |
-| GET    | `/`              | super_admin | List, newest updated first                                                                    |
-| GET    | `/filter`        | super_admin | `?status=&stationIds=&subcategoryIds=&categoryIds=&search=` (lists are comma separated UUIDs) |
+| GET    | `/`              | super_admin | List, newest updated first (supports `?search=`, `?isPromo=true\|false`)                      |
+| GET    | `/assigned`      | session     | Employee-facing procedures list (accepts `?scope=all\|mine\|promos`, `?isPromo=true\|false`, `?categoryId=`, `?search=`, `?page=`, `?limit=`) |
+| GET    | `/filter`        | super_admin | `?status=&stationIds=&subcategoryIds=&categoryIds=&search=&isPromo=` (lists are comma separated UUIDs) |
 | GET    | `/:slug`         | session     | Read one procedure by slug                                                                    |
 | POST   | `/`              | super_admin | Create. Slug is generated from `titleEn` and made unique (`-2`, `-3`, ...)                    |
 | PUT    | `/:id`           | super_admin | Full update, same validation as create                                                        |
+| PATCH  | `/:id/promo`     | super_admin | Update promo dish run-window (`isPromo`, `promoStartsAt`, `promoExpiresAt`, `promoAudience`)  |
 | DELETE | `/:id`           | super_admin | Permanently delete a procedure                                                                |
 | POST   | `/:id/archive`   | super_admin | Saves the current status in `previousStatus`, then sets `archived`                            |
 | POST   | `/:id/unarchive` | super_admin | Restores `previousStatus` (or `draft`)                                                        |
 
 ### Quizzes - `/api/v1/quizzes`
 
-`GET /` (session), `GET /:id` (session), `POST /` (super_admin) with `{ nameEn, nameEs, quizType?, questions[] }`.
+| Method | Path                  | Access      | Notes                                                                                             |
+| ------ | --------------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| GET    | `/`                   | session     | List quizzes                                                                                      |
+| GET    | `/:id`                | session     | Get single quiz with questions                                                                    |
+| POST   | `/`                   | super_admin | Create quiz with `{ nameEn, nameEs, quizType?, questions[] }` (supports `multiple_choice` and `sequence`) |
+| POST   | `/:id/check-answer`   | session     | Checks answer for a single question (`{ questionId, selectedChoiceId?, sequenceOrder? }`)          |
+| POST   | `/:id/check-answers`  | session     | Batch verification: checks all question answers at once (`{ answers: [...] }`). Returns score, pass status, and per-question evaluation |
 
 ### Uploads - `/api/v1/uploads` (super_admin)
 
