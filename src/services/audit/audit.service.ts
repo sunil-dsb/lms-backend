@@ -229,7 +229,9 @@ function questionLabel(raw: unknown): string {
       const label = firstText(item?.label) ?? `Step ${i + 1}`;
       seqParts.push(`${i + 1}. ${clip(label, CHOICE_LABEL_MAX)}`);
     }
-    return seqParts.length > 0 ? `${head} (Seq: ${seqParts.join(' → ')})` : head;
+    return seqParts.length > 0
+      ? `${head} (Seq: ${seqParts.join(' → ')})`
+      : head;
   }
 
   const choices = Array.isArray(q.choices) ? q.choices : [];

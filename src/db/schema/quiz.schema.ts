@@ -84,9 +84,7 @@ export const quizQuestionSchema = z
     const hasQuestion = Boolean(
       q.question?.en?.trim() || q.question?.es?.trim(),
     );
-    const hasPrompt = Boolean(
-      q.prompt?.en?.trim() || q.prompt?.es?.trim(),
-    );
+    const hasPrompt = Boolean(q.prompt?.en?.trim() || q.prompt?.es?.trim());
     if (!hasQuestion && !hasPrompt && q.type !== 'sequence') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -2,7 +2,15 @@ import type { Request, Response } from 'express';
 import { fromNodeHeaders } from 'better-auth/node';
 import { eq, and, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { employees, user, account, session, stations, jobs, verification } from '../../db/index.ts';
+import {
+  employees,
+  user,
+  account,
+  session,
+  stations,
+  jobs,
+  verification,
+} from '../../db/index.ts';
 import { auth } from '../../config/auth.ts';
 import {
   loginUser,
@@ -346,7 +354,12 @@ export const setPassword = catchAsync(
 export const verifyInvite = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
     const { lang, token } = req.params;
-    if (!token || !lang || typeof token !== 'string' || typeof lang !== 'string') {
+    if (
+      !token ||
+      !lang ||
+      typeof token !== 'string' ||
+      typeof lang !== 'string'
+    ) {
       res.status(400).send('Missing language or token');
       return;
     }

@@ -339,7 +339,7 @@ export async function checkQuizAnswer(
   }
 
   const rawQuestions = Array.isArray(targetQuiz.questions)
-    ? (targetQuiz.questions as Array<Record<string, any>>)
+    ? (targetQuiz.questions as Array<Record<string, unknown>>)
     : [];
 
   const foundQuestion = rawQuestions.find(
@@ -358,7 +358,9 @@ export async function checkQuizAnswer(
     const sequenceItems = Array.isArray(foundQuestion.sequenceItems)
       ? foundQuestion.sequenceItems
       : [];
-    const correctOrder = sequenceItems.map((item: any) => String(item.id));
+    const correctOrder = sequenceItems.map((item: Record<string, unknown>) =>
+      String(item.id),
+    );
     const submittedOrder = Array.isArray(input.sequenceOrder)
       ? input.sequenceOrder.map(String)
       : [];
@@ -379,8 +381,8 @@ export async function checkQuizAnswer(
   // Multiple choice
   const isCorrect = Boolean(
     input.choiceId &&
-      foundQuestion.correctChoiceId &&
-      String(input.choiceId) === String(foundQuestion.correctChoiceId),
+    foundQuestion.correctChoiceId &&
+    String(input.choiceId) === String(foundQuestion.correctChoiceId),
   );
 
   return {
@@ -436,7 +438,7 @@ export async function checkQuizBatchAnswers(
   }
 
   const rawQuestions = Array.isArray(targetQuiz.questions)
-    ? (targetQuiz.questions as Array<Record<string, any>>)
+    ? (targetQuiz.questions as Array<Record<string, unknown>>)
     : [];
 
   const results: Array<{
@@ -465,7 +467,9 @@ export async function checkQuizBatchAnswers(
       const sequenceItems = Array.isArray(foundQuestion.sequenceItems)
         ? foundQuestion.sequenceItems
         : [];
-      const correctOrder = sequenceItems.map((s: any) => String(s.id));
+      const correctOrder = sequenceItems.map((s: Record<string, unknown>) =>
+        String(s.id),
+      );
       const submittedOrder = Array.isArray(item.sequenceOrder)
         ? item.sequenceOrder.map(String)
         : [];
@@ -483,8 +487,8 @@ export async function checkQuizBatchAnswers(
     } else {
       const isCorrect = Boolean(
         item.choiceId &&
-          foundQuestion.correctChoiceId &&
-          String(item.choiceId) === String(foundQuestion.correctChoiceId),
+        foundQuestion.correctChoiceId &&
+        String(item.choiceId) === String(foundQuestion.correctChoiceId),
       );
 
       results.push({
