@@ -7,11 +7,37 @@ import {
   deleteQuiz,
   checkAnswer,
   checkBatchAnswers,
+  generateQuizFromProcedure,
+  generateQuizFromChapter,
 } from '../../controllers/v1/quiz.controller.ts';
 import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
+import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
 
 const quizRoute: Router = express.Router();
+
+// AI generation routes (super_admin & manager)
+quizRoute.post(
+  '/generate-from-procedure',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  createLimiter({
+    limit: 15,
+    message: 'Too many quiz generation requests, please try again later.',
+  }),
+  generateQuizFromProcedure,
+);
+
+quizRoute.post(
+  '/generate-from-chapter',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  createLimiter({
+    limit: 15,
+    message: 'Too many quiz generation requests, please try again later.',
+  }),
+  generateQuizFromChapter,
+);
 
 // Public read routes (any logged-in employee)
 quizRoute.get('/', requireAuth, listQuizzes);

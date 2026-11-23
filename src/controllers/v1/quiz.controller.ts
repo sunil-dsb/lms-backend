@@ -9,7 +9,18 @@ import {
   checkBatchAnswersInputSchema,
 } from '../../db/quiz.schema.ts';
 import * as quizzesService from '../../services/quiz/quiz.service.ts';
+import * as quizAiService from '../../services/quiz/quiz-ai.service.ts';
+import {
+  generateQuizInputSchema,
+  generateChapterQuizInputSchema,
+} from '../../services/quiz/quiz-ai.service.ts';
 import { getPaginationParams } from '../../shared/utils/pagination.ts';
+import { db } from '../../db/client.ts';
+import { procedures } from '../../db/procedure.schema.ts';
+import { trainingChapters } from '../../db/schema/training-chapters.schema.ts';
+import { trainingCourses } from '../../db/schema/training-courses.schema.ts';
+import { eq } from 'drizzle-orm';
+import { parseStoredBody } from '../../services/procedures/procedures.service.ts';
 
 // POST /api/admin/library/quizzes
 export const createQuiz = catchAsync(
@@ -165,5 +176,130 @@ export const checkBatchAnswers = catchAsync(
     res
       .status(200)
       .json(ApiResponse.success('Answers checked successfully', result));
+  },
+);
+
+// POST /api/v1/quizzes/generate-from-procedure
+export const generateQuizFromProcedure = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = generateQuizInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    let procedureInput = parsed.data.procedure;
+
+    if (!procedureInput && parsed.data.procedureId) {
+      const [row] = await db
+        .select()
+        .from(procedures)
+        .where(eq(procedures.id, parsed.data.procedureId))
+        .limit(1);
+
+      if (!row) {
+        throw new ApiError('Procedure not found', 404, true, '', {
+          code: 'PROCEDURE_NOT_FOUND',
+        });
+      }
+
+      const bodyEn = parseStoredBody(row.blocksEn, `${row.id}/blocksEn`);
+
+      procedureInput = {
+        titleEn: row.titleEn,
+        titleEs: row.titleEs,
+        purposeEn: row.purposeEn || '',
+        purposeEs: row.purposeEs || '',
+        blocks: bodyEn.blocks as unknown as Array<Record<string, unknown>>,
+        ingredients: [],
+      };
+    }
+
+    if (!procedureInput) {
+      throw new ApiError(
+        'Procedure content is required to generate quiz',
+        400,
+        true,
+        '',
+        {
+          code: 'PROCEDURE_REQUIRED',
+        },
+      );
+    }
+
+    const result = await quizAiService.generateQuizFromProcedure(
+      procedureInput,
+      parsed.data.config,
+    );
+
+    res
+      .status(200)
+      .json(ApiResponse.success('Quiz generated successfully', result));
+  },
+);
+
+// POST /api/v1/quizzes/generate-from-chapter
+export const generateQuizFromChapter = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const parsed = generateChapterQuizInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+
+    let chapterInput = parsed.data.chapter;
+
+    if (!chapterInput && parsed.data.chapterId) {
+      const [chRow] = await db
+        .select()
+        .from(trainingChapters)
+        .where(eq(trainingChapters.id, parsed.data.chapterId))
+        .limit(1);
+
+      if (!chRow) {
+        throw new ApiError('Chapter not found', 404, true, '', {
+          code: 'CHAPTER_NOT_FOUND',
+        });
+      }
+
+      // Fetch course name
+      const [cRow] = await db
+        .select()
+        .from(trainingCourses)
+        .where(eq(trainingCourses.id, chRow.courseId))
+        .limit(1);
+
+      chapterInput = {
+        courseId: chRow.courseId,
+        courseName: cRow?.titleEn || '',
+        chapterNumber: chRow.number,
+        titleEn: chRow.titleEn,
+        titleEs: chRow.titleEs,
+        purposeEn: chRow.subtitleEn || '',
+        purposeEs: chRow.subtitleEs || '',
+        blocks: Array.isArray(chRow.blocks)
+          ? (chRow.blocks as Array<Record<string, unknown>>)
+          : [],
+      };
+    }
+
+    if (!chapterInput) {
+      throw new ApiError(
+        'Chapter content is required to generate quiz',
+        400,
+        true,
+        '',
+        {
+          code: 'CHAPTER_REQUIRED',
+        },
+      );
+    }
+
+    const result = await quizAiService.generateQuizFromChapter(
+      chapterInput,
+      parsed.data.config,
+    );
+
+    res
+      .status(200)
+      .json(ApiResponse.success('Quiz generated successfully', result));
   },
 );
