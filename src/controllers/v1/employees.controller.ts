@@ -26,6 +26,11 @@ import {
   getActiveInviteUrl,
   createEmployeeTransaction,
   updateEmployeeTransaction,
+  getEmployeeSupervisors,
+  getSupervisorManagers,
+  getSupervisorSubordinates,
+  listSupervisors,
+  listManagers,
 } from '../../services/employee/employee.service.ts';
 
 import { listEmployeeTraining } from '../../services/courses/course-assignments.service.ts';
@@ -52,6 +57,47 @@ export const createEmployee = catchAsync(
     }
     const input = parsed.data;
 
+    // Strict Role-Based Hierarchy Authorization:
+    // 1. super_admin: can create manager, supervisor, employee
+    // 2. manager: can only create supervisor and employee within their own location
+    // 3. supervisor/employee: forbidden
+    if (!req.isSuperAdmin) {
+      if (req.employee?.role === 'manager') {
+        if (input.role === 'manager') {
+          throw new ApiError(
+            'Managers cannot create other managers.',
+            403,
+            true,
+            '',
+            {
+              code: 'FORBIDDEN',
+            },
+          );
+        }
+        if (input.locationId !== req.employee.locationId) {
+          throw new ApiError(
+            'Managers can only create employees for their own assigned location.',
+            403,
+            true,
+            '',
+            {
+              code: 'FORBIDDEN',
+            },
+          );
+        }
+      } else {
+        throw new ApiError(
+          'You do not have permission to invite or create employees.',
+          403,
+          true,
+          '',
+          {
+            code: 'FORBIDDEN',
+          },
+        );
+      }
+    }
+
     const { employee: row } = await createEmployeeTransaction(input, adminId);
 
     // Send magic link invite email — Better Auth handles token generation.
@@ -61,7 +107,11 @@ export const createEmployee = catchAsync(
       languagePref: row.languagePref,
     });
 
-    const employeeResponse = await buildEmployeeResponse(row);
+    const employeeResponse = await buildEmployeeResponse(
+      row,
+      undefined,
+      req.isSuperAdmin ? 'super_admin' : req.employee?.role,
+    );
 
     res.status(201).json(
       ApiResponse.success('Employee created and invite sent', {
@@ -252,6 +302,30 @@ export const listEmployees = catchAsync(
         )!,
       );
     }
+
+    // Role-based visibility scoping:
+    // 1. super_admin: sees all employees
+    // 2. manager: sees employees within their assigned location
+    // 3. supervisor: sees their direct subordinates
+    if (!req.isSuperAdmin) {
+      if (req.employee?.role === 'manager') {
+        conditions.push(eq(employees.locationId, req.employee.locationId));
+      } else if (req.employee?.role === 'supervisor') {
+        const mySubs = await getSupervisorSubordinates(req.employee.id);
+        const subIds = mySubs.map((s) => s.id);
+        if (subIds.length === 0) {
+          res.status(200).json(
+            ApiResponse.success('Employees retrieved successfully', {
+              employees: [],
+              meta: formatPaginatedResult([], 0, page, limit).meta,
+            }),
+          );
+          return;
+        }
+        conditions.push(inArray(employees.id, subIds));
+      }
+    }
+
     const whereClause = conditions.length ? and(...conditions) : undefined;
 
     const rows = await db
@@ -468,13 +542,74 @@ export const updateEmployee = catchAsync(
 
     const [existing] = await db
       .select({
+        id: employees.id,
         email: employees.email,
         userId: employees.userId,
         status: employees.status,
+        locationId: employees.locationId,
+        role: employees.role,
       })
       .from(employees)
       .where(eq(employees.id, param.data.id))
       .limit(1);
+
+    if (!existing) {
+      throw new ApiError('Employee not found', 404, true, '', {
+        code: 'EMPLOYEE_NOT_FOUND',
+      });
+    }
+
+    // Role-based update authorization:
+    // 1. super_admin: can update any employee and change role
+    // 2. manager: can only update employees in their own location, cannot modify other managers, cannot change role
+    // 3. supervisor/employee: forbidden
+    if (!req.isSuperAdmin) {
+      if (req.employee?.role === 'manager') {
+        if (existing.locationId !== req.employee.locationId) {
+          throw new ApiError(
+            'You can only manage employees within your assigned location.',
+            403,
+            true,
+            '',
+            {
+              code: 'FORBIDDEN',
+            },
+          );
+        }
+        if (existing.role === 'manager' && existing.id !== req.employee.id) {
+          throw new ApiError(
+            'Managers cannot modify other managers.',
+            403,
+            true,
+            '',
+            {
+              code: 'FORBIDDEN',
+            },
+          );
+        }
+        if (parsed.data.role && parsed.data.role !== existing.role) {
+          throw new ApiError(
+            'Managers cannot change employee roles.',
+            403,
+            true,
+            '',
+            {
+              code: 'FORBIDDEN',
+            },
+          );
+        }
+      } else {
+        throw new ApiError(
+          'You do not have permission to update employees.',
+          403,
+          true,
+          '',
+          {
+            code: 'FORBIDDEN',
+          },
+        );
+      }
+    }
 
     const { employee: updated } = await updateEmployeeTransaction(
       param.data.id,
@@ -495,7 +630,11 @@ export const updateEmployee = catchAsync(
       });
     }
 
-    const employeeResponse = await buildEmployeeResponse(updated);
+    const employeeResponse = await buildEmployeeResponse(
+      updated,
+      undefined,
+      req.isSuperAdmin ? 'super_admin' : req.employee?.role,
+    );
 
     res.status(200).json(
       ApiResponse.success('Employee updated successfully', {
@@ -506,11 +645,67 @@ export const updateEmployee = catchAsync(
   },
 );
 
+// ---------- GET /api/admin/employees/supervisors ---------------------------
+export const getSupervisors = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const locationId =
+      (req.query.locationId as string) || req.employee?.locationId;
+    const supervisors = await listSupervisors(locationId);
+    res.status(200).json(
+      ApiResponse.success('Supervisors retrieved successfully', {
+        supervisors,
+      }),
+    );
+  },
+);
+
+// ---------- GET /api/admin/employees/managers ------------------------------
+export const getManagers = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const locationId =
+      (req.query.locationId as string) || req.employee?.locationId;
+    const managers = await listManagers(locationId);
+    res.status(200).json(
+      ApiResponse.success('Managers retrieved successfully', {
+        managers,
+      }),
+    );
+  },
+);
+
+// ---------- GET /api/admin/employees/subordinates --------------------------
+export const getSubordinates = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    if (!req.employee?.id) {
+      throw new ApiError('Employee profile required', 400, true, '', {
+        code: 'EMPLOYEE_PROFILE_REQUIRED',
+      });
+    }
+    const subordinates = await getSupervisorSubordinates(req.employee.id);
+    res.status(200).json(
+      ApiResponse.success('Subordinates retrieved successfully', {
+        subordinates,
+      }),
+    );
+  },
+);
+
 // ============================================================================
 // Shared helpers
 // ============================================================================
 
-export function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
+export function publicEmployee(
+  e: Readonly<typeof employees.$inferSelect>,
+  maskSin = true,
+) {
+  let formattedSin = e.sinNumber ?? null;
+  if (maskSin && formattedSin) {
+    formattedSin = formattedSin.replace(
+      /^(\d{3})-?(\d{3})-?(\d{3})$/,
+      '***-***-$3',
+    );
+  }
+
   return {
     id: e.id,
     name: e.name,
@@ -520,6 +715,17 @@ export function publicEmployee(e: Readonly<typeof employees.$inferSelect>) {
     role: e.role,
     languagePref: e.languagePref,
     status: e.status,
+    dateOfBirth: e.dateOfBirth ?? null,
+    fathersName: e.fathersName ?? null,
+    gender: e.gender ?? null,
+    address: e.address ?? null,
+    phoneNumber: e.phoneNumber ?? null,
+    emergencyContactName: e.emergencyContactName ?? null,
+    emergencyContactRelation: e.emergencyContactRelation ?? null,
+    emergencyContactPhone: e.emergencyContactPhone ?? null,
+    startDate: e.startDate ?? null,
+    sinNumber: formattedSin,
+    hourlyRate: e.hourlyRate != null ? String(e.hourlyRate) : null,
     createdAt: e.createdAt.toISOString(),
     deactivatedAt: e.deactivatedAt ? e.deactivatedAt.toISOString() : null,
   };
@@ -567,6 +773,7 @@ export async function getJobsAndStationsMap(
 export async function buildEmployeeResponse(
   employee: typeof employees.$inferSelect,
   locationName?: string | null,
+  viewerRole?: string,
 ) {
   let locName = locationName;
   if (locName === undefined && employee.locationId) {
@@ -578,10 +785,12 @@ export async function buildEmployeeResponse(
     locName = loc?.name ?? null;
   }
 
-  const { jobMap, stationMap } = await getJobsAndStationsMap(
-    employee.jobIds || [],
-    employee.stationIds || [],
-  );
+  const [{ jobMap, stationMap }, supervisorsList, managersList] =
+    await Promise.all([
+      getJobsAndStationsMap(employee.jobIds || [], employee.stationIds || []),
+      getEmployeeSupervisors(employee.id),
+      getSupervisorManagers(employee.id),
+    ]);
 
   const resolvedJobs = (employee.jobIds || [])
     .map((id) => jobMap.get(id))
@@ -591,11 +800,17 @@ export async function buildEmployeeResponse(
     .map((id) => stationMap.get(id))
     .filter((s): s is { id: string; name: string } => Boolean(s));
 
+  const maskSin = viewerRole !== 'super_admin' && viewerRole !== 'manager';
+
   return {
-    ...publicEmployee(employee),
+    ...publicEmployee(employee, maskSin),
     locationName: locName ?? null,
     roleName: employee.role,
     jobs: resolvedJobs,
     stations: resolvedStations,
+    supervisors: supervisorsList,
+    supervisorIds: supervisorsList.map((s) => s.id),
+    managers: managersList,
+    managerIds: managersList.map((m) => m.id),
   };
 }

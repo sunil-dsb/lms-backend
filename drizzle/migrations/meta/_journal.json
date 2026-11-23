@@ -92,6 +92,13 @@
       "when": 1794474895311,
       "tag": "0012_omniscient_switch",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795415486470,
+      "tag": "0013_brief_black_queen",
+      "breakpoints": true
     }
   ]
 }
