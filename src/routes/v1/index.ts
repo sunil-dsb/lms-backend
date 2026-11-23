@@ -48,6 +48,10 @@ const defaultRoutes = [
     route: jobsRoute,
   },
   {
+    path: '/roles',
+    route: jobsRoute,
+  },
+  {
     path: '/categories',
     route: categoriesRoute,
   },
