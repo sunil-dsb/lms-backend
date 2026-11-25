@@ -7,7 +7,18 @@ import {
   updateSchema,
   idParam,
 } from '../../shared/validations/employees.schema.ts';
-import { SQL, and, eq, count, ilike, or, inArray, desc } from 'drizzle-orm';
+import {
+  SQL,
+  and,
+  eq,
+  count,
+  ilike,
+  or,
+  inArray,
+  desc,
+  ne,
+  sql,
+} from 'drizzle-orm';
 import {
   getPaginationParams,
   formatPaginatedResult,
@@ -29,6 +40,7 @@ import {
   getEmployeeSupervisors,
   getSupervisorManagers,
   getSupervisorSubordinates,
+  getManagerSubordinates,
   listSupervisors,
   listManagers,
 } from '../../services/employee/employee.service.ts';
@@ -289,61 +301,147 @@ export const listEmployees = catchAsync(
     const q = statusEnum.safeParse(req.query.status ?? 'all');
     const status = q.success ? q.data : 'all';
 
-    const conditions: SQL[] = [];
-    if (status !== 'all') {
-      conditions.push(eq(employees.status, status));
+    const baseConditions: SQL[] = [];
+
+    if (typeof req.query.role === 'string' && req.query.role !== 'all') {
+      const rawRole = req.query.role.toLowerCase();
+      const normalizedRole = rawRole === 'admin' ? 'super_admin' : rawRole;
+      const validRoles = ['super_admin', 'manager', 'supervisor', 'employee'];
+      if (validRoles.includes(normalizedRole)) {
+        baseConditions.push(
+          eq(
+            employees.role,
+            normalizedRole as (typeof employees.$inferSelect)['role'],
+          ),
+        );
+      }
+    }
+    if (
+      typeof req.query.stationId === 'string' &&
+      req.query.stationId !== 'all'
+    ) {
+      baseConditions.push(
+        sql`${req.query.stationId} = ANY(${employees.stationIds})`,
+      );
+    }
+    if (typeof req.query.jobId === 'string' && req.query.jobId !== 'all') {
+      baseConditions.push(sql`${req.query.jobId} = ANY(${employees.jobIds})`);
     }
     if (search) {
-      conditions.push(
+      baseConditions.push(
         or(
           ilike(employees.name, `%${search}%`),
           ilike(employees.email, `%${search}%`),
           ilike(employees.employeeCode, `%${search}%`),
+          ilike(employees.role, `%${search}%`),
         )!,
       );
     }
 
     // Role-based visibility scoping:
     // 1. super_admin: sees all employees
-    // 2. manager: sees employees within their assigned location
-    // 3. supervisor: sees their direct subordinates
+    // 2. manager: sees their direct supervisors + nested employees under them (manager themselves excluded)
+    // 3. supervisor: sees their direct subordinates (supervisor themselves excluded)
     if (!req.isSuperAdmin) {
+      if (req.employee?.id) {
+        baseConditions.push(ne(employees.id, req.employee.id));
+      }
       if (req.employee?.role === 'manager') {
-        conditions.push(eq(employees.locationId, req.employee.locationId));
-      } else if (req.employee?.role === 'supervisor') {
-        const mySubs = await getSupervisorSubordinates(req.employee.id);
-        const subIds = mySubs.map((s) => s.id);
+        const mySubs = await getManagerSubordinates(req.employee.id);
+        const subIds = mySubs
+          .map((s) => s.id)
+          .filter((id) => id !== req.employee?.id);
         if (subIds.length === 0) {
           res.status(200).json(
             ApiResponse.success('Employees retrieved successfully', {
               employees: [],
               meta: formatPaginatedResult([], 0, page, limit).meta,
+              statusCounts: { all: 0, pending: 0, active: 0, deactivated: 0 },
             }),
           );
           return;
         }
-        conditions.push(inArray(employees.id, subIds));
+        baseConditions.push(inArray(employees.id, subIds));
+      } else if (req.employee?.role === 'supervisor') {
+        const mySubs = await getSupervisorSubordinates(req.employee.id);
+        const subIds = mySubs
+          .map((s) => s.id)
+          .filter((id) => id !== req.employee?.id);
+        if (subIds.length === 0) {
+          res.status(200).json(
+            ApiResponse.success('Employees retrieved successfully', {
+              employees: [],
+              meta: formatPaginatedResult([], 0, page, limit).meta,
+              statusCounts: { all: 0, pending: 0, active: 0, deactivated: 0 },
+            }),
+          );
+          return;
+        }
+        baseConditions.push(inArray(employees.id, subIds));
+      } else {
+        // Standard employee has no subordinates
+        res.status(200).json(
+          ApiResponse.success('Employees retrieved successfully', {
+            employees: [],
+            meta: formatPaginatedResult([], 0, page, limit).meta,
+            statusCounts: { all: 0, pending: 0, active: 0, deactivated: 0 },
+          }),
+        );
+        return;
       }
     }
 
+    // Filter conditions for the employee page (includes status filter if specified)
+    const conditions = [...baseConditions];
+    if (status !== 'all') {
+      conditions.push(eq(employees.status, status));
+    }
+
     const whereClause = conditions.length ? and(...conditions) : undefined;
+    const baseWhereClause = baseConditions.length
+      ? and(...baseConditions)
+      : undefined;
 
-    const rows = await db
-      .select({
-        employee: employees,
-        locationName: locations.name,
-      })
-      .from(employees)
-      .leftJoin(locations, eq(locations.id, employees.locationId))
-      .where(whereClause)
-      .orderBy(desc(employees.createdAt))
-      .limit(limit)
-      .offset(offset);
+    // Parallel execution: fetch page rows, count for current status filter, and counts across all statuses
+    const [rows, [countRes], statusCountsRows] = await Promise.all([
+      db
+        .select({
+          employee: employees,
+          locationName: locations.name,
+        })
+        .from(employees)
+        .leftJoin(locations, eq(locations.id, employees.locationId))
+        .where(whereClause)
+        .orderBy(desc(employees.createdAt))
+        .limit(limit)
+        .offset(offset),
 
-    const [countRes] = await db
-      .select({ total: count() })
-      .from(employees)
-      .where(whereClause);
+      db.select({ total: count() }).from(employees).where(whereClause),
+
+      db
+        .select({
+          status: employees.status,
+          total: count(),
+        })
+        .from(employees)
+        .where(baseWhereClause)
+        .groupBy(employees.status),
+    ]);
+
+    const statusCounts = {
+      all: 0,
+      pending: 0,
+      active: 0,
+      deactivated: 0,
+    };
+    for (const sc of statusCountsRows) {
+      const num = Number(sc.total);
+      if (sc.status === 'pending') statusCounts.pending = num;
+      if (sc.status === 'active') statusCounts.active = num;
+      if (sc.status === 'deactivated') statusCounts.deactivated = num;
+    }
+    statusCounts.all =
+      statusCounts.pending + statusCounts.active + statusCounts.deactivated;
 
     const allJobIds = rows.flatMap((r) => r.employee.jobIds || []);
     const allStationIds = rows.flatMap((r) => r.employee.stationIds || []);
@@ -376,10 +474,11 @@ export const listEmployees = catchAsync(
         employees: mappedEmployees,
         meta: formatPaginatedResult(
           mappedEmployees,
-          countRes?.total ?? 0,
+          Number(countRes?.total ?? 0),
           page,
           limit,
         ).meta,
+        statusCounts,
       }),
     );
   },
@@ -411,9 +510,49 @@ export const getEmployee = catchAsync(
       });
     }
 
+    if (!req.isSuperAdmin) {
+      if (req.employee?.role === 'manager') {
+        const mySubs = await getManagerSubordinates(req.employee.id);
+        const visibleIds = [req.employee.id, ...mySubs.map((s) => s.id)];
+        if (!visibleIds.includes(param.data.id)) {
+          throw new ApiError(
+            'You do not have permission to view this employee',
+            403,
+            true,
+            '',
+            { code: 'FORBIDDEN' },
+          );
+        }
+      } else if (req.employee?.role === 'supervisor') {
+        const mySubs = await getSupervisorSubordinates(req.employee.id);
+        const visibleIds = [req.employee.id, ...mySubs.map((s) => s.id)];
+        if (!visibleIds.includes(param.data.id)) {
+          throw new ApiError(
+            'You do not have permission to view this employee',
+            403,
+            true,
+            '',
+            { code: 'FORBIDDEN' },
+          );
+        }
+      } else if (
+        req.employee?.role === 'employee' &&
+        param.data.id !== req.employee.id
+      ) {
+        throw new ApiError(
+          'Employees may only view their own profile',
+          403,
+          true,
+          '',
+          { code: 'FORBIDDEN' },
+        );
+      }
+    }
+
     const employeeResponse = await buildEmployeeResponse(
       row.employee,
       row.locationName,
+      req.employee?.id === param.data.id ? 'self' : req.employee?.role,
     );
 
     let inviteUrl: string | undefined = undefined;
@@ -576,7 +715,18 @@ export const updateEmployee = catchAsync(
             },
           );
         }
-        if (existing.role === 'manager' && existing.id !== req.employee.id) {
+        if (existing.id === req.employee.id) {
+          throw new ApiError(
+            'Managers cannot edit their own employee profile from the staff roster.',
+            403,
+            true,
+            '',
+            {
+              code: 'FORBIDDEN',
+            },
+          );
+        }
+        if (existing.role === 'manager') {
           throw new ApiError(
             'Managers cannot modify other managers.',
             403,
@@ -681,10 +831,56 @@ export const getSubordinates = catchAsync(
         code: 'EMPLOYEE_PROFILE_REQUIRED',
       });
     }
-    const subordinates = await getSupervisorSubordinates(req.employee.id);
+    const subordinates =
+      req.employee.role === 'manager'
+        ? await getManagerSubordinates(req.employee.id)
+        : await getSupervisorSubordinates(req.employee.id);
+
     res.status(200).json(
       ApiResponse.success('Subordinates retrieved successfully', {
         subordinates,
+      }),
+    );
+  },
+);
+
+// ---------- GET /api/v1/employees/roles ------------------------------------
+export const getOperationalRoles = catchAsync(
+  async (req: Request, res: Response): Promise<void> => {
+    const availableRoles = req.isSuperAdmin
+      ? [
+          {
+            id: 'manager',
+            name: 'Manager',
+            description: 'Department or location manager',
+          },
+          {
+            id: 'supervisor',
+            name: 'Supervisor',
+            description: 'Team and shift supervisor',
+          },
+          {
+            id: 'employee',
+            name: 'Employee',
+            description: 'Operational staff and training learner',
+          },
+        ]
+      : [
+          {
+            id: 'supervisor',
+            name: 'Supervisor',
+            description: 'Team and shift supervisor',
+          },
+          {
+            id: 'employee',
+            name: 'Employee',
+            description: 'Operational staff and training learner',
+          },
+        ];
+
+    res.status(200).json(
+      ApiResponse.success('Roles retrieved successfully', {
+        roles: availableRoles,
       }),
     );
   },
@@ -726,6 +922,9 @@ export function publicEmployee(
     startDate: e.startDate ?? null,
     sinNumber: formattedSin,
     hourlyRate: e.hourlyRate != null ? String(e.hourlyRate) : null,
+    jobIds: e.jobIds ?? [],
+    roleIds: e.jobIds ?? [],
+    stationIds: e.stationIds ?? [],
     createdAt: e.createdAt.toISOString(),
     deactivatedAt: e.deactivatedAt ? e.deactivatedAt.toISOString() : null,
   };
@@ -800,14 +999,20 @@ export async function buildEmployeeResponse(
     .map((id) => stationMap.get(id))
     .filter((s): s is { id: string; name: string } => Boolean(s));
 
-  const maskSin = viewerRole !== 'super_admin' && viewerRole !== 'manager';
+  const maskSin =
+    viewerRole !== 'super_admin' &&
+    viewerRole !== 'manager' &&
+    viewerRole !== 'self';
 
   return {
     ...publicEmployee(employee, maskSin),
     locationName: locName ?? null,
     roleName: employee.role,
     jobs: resolvedJobs,
+    jobIds: employee.jobIds || [],
+    roleIds: employee.jobIds || [],
     stations: resolvedStations,
+    stationIds: employee.stationIds || [],
     supervisors: supervisorsList,
     supervisorIds: supervisorsList.map((s) => s.id),
     managers: managersList,

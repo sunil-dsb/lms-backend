@@ -15,8 +15,27 @@ import * as coursesService from '../../services/courses/courses.service.ts';
 import * as courseAssignmentsService from '../../services/courses/course-assignments.service.ts';
 import * as courseProgressService from '../../services/courses/course-progress.service.ts';
 import { z } from 'zod';
+import {
+  getManagerSubordinates,
+  getSupervisorSubordinates,
+} from '../../services/employee/employee.service.ts';
 
 const uuidParamSchema = z.string().uuid('Invalid course ID');
+
+async function getScopedEmployeeIds(
+  req: Request,
+): Promise<string[] | undefined> {
+  if (req.isSuperAdmin) return undefined;
+  if (req.employee?.role === 'manager') {
+    const mySubs = await getManagerSubordinates(req.employee.id);
+    return mySubs.map((employee) => employee.id);
+  }
+  if (req.employee?.role === 'supervisor') {
+    const mySubs = await getSupervisorSubordinates(req.employee.id);
+    return mySubs.map((s) => s.id);
+  }
+  return undefined;
+}
 
 function requireEmployeeId(req: Request): string {
   if (!req.employee?.id) {
@@ -46,6 +65,9 @@ export const listCourses = catchAsync(
     } else if (statusParam === 'archived' || statusParam === 'archive') {
       status = 'archived';
     }
+    if (req.employee?.role === 'supervisor') {
+      status = 'published';
+    }
 
     const assignmentParam =
       typeof req.query.assignment === 'string'
@@ -61,13 +83,19 @@ export const listCourses = catchAsync(
       assignment = 'all';
     }
 
-    const employeeCourseIds = req.employee
-      ? (
-          await courseAssignmentsService.listAvailableEmployeeTraining(
-            req.employee.id,
-          )
-        ).assignments.map((assignment) => assignment.courseId)
-      : undefined;
+    const isManagementRole =
+      req.isSuperAdmin ||
+      req.employee?.role === 'manager' ||
+      req.employee?.role === 'supervisor';
+
+    const employeeCourseIds =
+      !isManagementRole && req.employee
+        ? (
+            await courseAssignmentsService.listAvailableEmployeeTraining(
+              req.employee.id,
+            )
+          ).assignments.map((assignment) => assignment.courseId)
+        : undefined;
 
     const result = await coursesService.listCourses({
       search,
@@ -134,7 +162,17 @@ export const getCourse = catchAsync(
     }
 
     const course = await coursesService.getCourseById(idValidation.data);
-    if (req.employee?.id) {
+    if (req.employee?.role === 'supervisor' && course.status !== 'published') {
+      throw new ApiError('Course not found', 404, true, '', {
+        code: 'NOT_FOUND',
+      });
+    }
+    const isManagementRole =
+      req.isSuperAdmin ||
+      req.employee?.role === 'manager' ||
+      req.employee?.role === 'supervisor';
+
+    if (!isManagementRole && req.employee?.id) {
       await courseAssignmentsService.assertEmployeeCanAccessTrainingCourse(
         idValidation.data,
         req.employee.id,
@@ -488,6 +526,8 @@ export const exportTrainingProgress = catchAsync(
     const search =
       typeof req.query.search === 'string' ? req.query.search : undefined;
 
+    const scopedEmployeeIds = await getScopedEmployeeIds(req);
+
     const csvContent = await courseProgressService.exportTrainingProgressCsv({
       ...(typeof rawStatus === 'string'
         ? { status: rawStatus as (typeof validStatuses)[number] }
@@ -496,6 +536,9 @@ export const exportTrainingProgress = catchAsync(
         ? { groupBy: rawGroupBy }
         : { groupBy: 'employee' }),
       ...(search !== undefined ? { search } : {}),
+      ...(scopedEmployeeIds !== undefined
+        ? { employeeIds: scopedEmployeeIds }
+        : {}),
     });
 
     const dateStr = new Date().toISOString().slice(0, 10);
@@ -566,6 +609,8 @@ export const getTrainingProgress = catchAsync(
         code: 'INVALID_INPUT',
       });
     }
+    const scopedEmployeeIds = await getScopedEmployeeIds(req);
+
     const data = await courseProgressService.getTrainingProgress({
       ...(typeof rawStatus === 'string'
         ? { status: rawStatus as (typeof validStatuses)[number] }
@@ -577,6 +622,9 @@ export const getTrainingProgress = catchAsync(
       limit,
       ...(search !== undefined ? { search } : {}),
       includeAssignments: rawIncludeAssignments === 'true',
+      ...(scopedEmployeeIds !== undefined
+        ? { employeeIds: scopedEmployeeIds }
+        : {}),
     });
     res
       .status(200)
