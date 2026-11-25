@@ -45,13 +45,23 @@ quizRoute.get('/:id', requireAuth, getQuiz);
 quizRoute.post('/:id/check-answer', requireAuth, checkAnswer);
 quizRoute.post('/:id/check-answers', requireAuth, checkBatchAnswers);
 
-// Admin routes
-quizRoute.post('/', requireAuth, requireRoles(['super_admin']), createQuiz);
-quizRoute.patch('/:id', requireAuth, requireRoles(['super_admin']), updateQuiz);
+// Admin & Manager mutation routes
+quizRoute.post(
+  '/',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  createQuiz,
+);
+quizRoute.patch(
+  '/:id',
+  requireAuth,
+  requireRoles(['super_admin', 'manager']),
+  updateQuiz,
+);
 quizRoute.delete(
   '/:id',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   deleteQuiz,
 );
 

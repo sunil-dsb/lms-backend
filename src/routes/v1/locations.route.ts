@@ -5,9 +5,10 @@ import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts
 import { createLimiter } from '../../shared/middleware/rateLimit.middleware.ts';
 
 const locationsRoute: Router = express.Router();
-locationsRoute.use(requireAuth, requireRoles(['super_admin']));
 
-locationsRoute.get('/', locationsController.listLocations);
+locationsRoute.get('/', requireAuth, locationsController.listLocations);
+
+locationsRoute.use(requireAuth, requireRoles(['super_admin']));
 
 locationsRoute.post(
   '/',

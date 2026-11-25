@@ -13,11 +13,11 @@ const jobsRoute: Router = express.Router();
 // @ts-expect-error - 'query' is a new HTTP method, Express typings may not include it yet
 jobsRoute.query('/stations', requireAuth, jobsController.getJobStations);
 
-// Read routes (super_admin and manager can view job roles for invites/assignments)
+// Read routes (super_admin, manager, and supervisor can view job roles for invites/assignments)
 jobsRoute.get(
   '/',
   requireAuth,
-  requireRoles(['super_admin', 'manager']),
+  requireRoles(['super_admin', 'manager', 'supervisor']),
   jobsController.listJobs,
 );
 

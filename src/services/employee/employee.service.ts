@@ -305,6 +305,7 @@ export interface UpdateEmployeeInput {
   email: string;
   locationId: string;
   role: string;
+  employeeCode?: string | null | undefined;
   jobIds?: string[] | undefined;
   stationIds?: string[] | undefined;
   languagePref: LanguagePref;
@@ -457,6 +458,9 @@ export async function updateEmployeeTransaction(
         email: input.email,
         locationId: input.locationId,
         role: (input.role as EmployeeRole) ?? 'employee',
+        ...(input.employeeCode !== undefined && {
+          employeeCode: input.employeeCode,
+        }),
         jobIds: input.jobIds ?? [],
         stationIds: input.stationIds ?? [],
         languagePref: input.languagePref,
@@ -615,8 +619,82 @@ export async function getSupervisorSubordinates(supervisorId: string) {
     })
     .from(employeeSupervisors)
     .innerJoin(employees, eq(employees.id, employeeSupervisors.employeeId))
-    .where(eq(employeeSupervisors.supervisorId, supervisorId));
-  return rows;
+    .where(
+      and(
+        eq(employeeSupervisors.supervisorId, supervisorId),
+        ne(employeeSupervisors.employeeId, supervisorId),
+      ),
+    );
+  return rows.filter((r) => r.id !== supervisorId);
+}
+
+export async function getManagerSubordinates(managerId: string) {
+  // 1. Direct supervisors assigned to this manager (never include managerId)
+  const sups = await db
+    .select({
+      id: employees.id,
+      name: employees.name,
+      email: employees.email,
+      employeeCode: employees.employeeCode,
+      locationId: employees.locationId,
+      role: employees.role,
+      status: employees.status,
+    })
+    .from(supervisorManagers)
+    .innerJoin(employees, eq(employees.id, supervisorManagers.supervisorId))
+    .where(
+      and(
+        eq(supervisorManagers.managerId, managerId),
+        ne(supervisorManagers.supervisorId, managerId),
+      ),
+    );
+
+  const supervisorIds = sups.map((s) => s.id).filter((id) => id !== managerId);
+
+  let emps: Array<{
+    id: string;
+    name: string;
+    email: string;
+    employeeCode: string | null;
+    locationId: string;
+    role: EmployeeRole;
+    status: EmployeeStatus;
+  }> = [];
+
+  const targetSupervisorIds = Array.from(
+    new Set([...supervisorIds, managerId]),
+  );
+
+  if (targetSupervisorIds.length > 0) {
+    emps = await db
+      .select({
+        id: employees.id,
+        name: employees.name,
+        email: employees.email,
+        employeeCode: employees.employeeCode,
+        locationId: employees.locationId,
+        role: employees.role,
+        status: employees.status,
+      })
+      .from(employeeSupervisors)
+      .innerJoin(employees, eq(employees.id, employeeSupervisors.employeeId))
+      .where(
+        and(
+          inArray(employeeSupervisors.supervisorId, targetSupervisorIds),
+          ne(employeeSupervisors.employeeId, managerId),
+        ),
+      );
+  }
+
+  const map = new Map<string, (typeof sups)[0]>();
+  for (const s of sups) {
+    if (s.id !== managerId) map.set(s.id, s);
+  }
+  for (const e of emps) {
+    if (e.id !== managerId) map.set(e.id, e);
+  }
+
+  return Array.from(map.values()).filter((item) => item.id !== managerId);
 }
 
 export async function listSupervisors(locationId?: string) {

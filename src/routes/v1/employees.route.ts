@@ -25,6 +25,12 @@ employeesRoute.get(
   employeesController.getSubordinates,
 );
 
+employeesRoute.get(
+  '/roles',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.getOperationalRoles,
+);
+
 // ---- Employees CRUD --------------------------------------------------------
 employeesRoute.get(
   '/',
@@ -34,7 +40,7 @@ employeesRoute.get(
 
 employeesRoute.get(
   '/:id',
-  requireRoles(['super_admin', 'manager', 'supervisor']),
+  requireRoles(['super_admin', 'manager', 'supervisor', 'employee']),
   employeesController.getEmployee,
 );
 
