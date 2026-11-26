@@ -19,6 +19,8 @@ export interface ChapterContextInput {
   titleEs?: string | undefined;
   purposeEn?: string | undefined;
   purposeEs?: string | undefined;
+  procedureId?: string | null | undefined;
+  procedureIds?: string[] | undefined;
   blocks?: Array<Record<string, unknown>> | undefined;
 }
 
@@ -47,6 +49,8 @@ export const generateChapterQuizInputSchema = z
         titleEs: z.string().trim().optional(),
         purposeEn: z.string().trim().optional(),
         purposeEs: z.string().trim().optional(),
+        procedureId: z.string().uuid().nullable().optional(),
+        procedureIds: z.array(z.string().uuid()).optional(),
         blocks: z
           .array(z.record(z.string(), z.unknown()))
           .optional()
@@ -89,6 +93,8 @@ export const generateQuizInputSchema = z
         titleEs: z.string().trim().optional(),
         purposeEn: z.string().trim().optional(),
         purposeEs: z.string().trim().optional(),
+        procedureId: z.string().uuid().nullable().optional(),
+        procedureIds: z.array(z.string().uuid()).optional(),
         blocks: z
           .array(z.record(z.string(), z.unknown()))
           .optional()

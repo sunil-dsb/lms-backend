@@ -4,6 +4,9 @@ import type {
 } from './quiz-ai.types.ts';
 import { logger } from '../../config/logger.ts';
 import config from '../../config/index.ts';
+import { db } from '../../db/client.ts';
+import { procedures } from '../../db/schema/procedures.schema.ts';
+import { inArray } from 'drizzle-orm';
 
 /**
  * Extracts plain text from a PDF file located at an HTTP/HTTPS URL, R2 bucket key, or local path.
@@ -129,6 +132,7 @@ export function extractTextFromTipTapNode(node: unknown): {
  */
 export async function extractProcedureContext(
   procedure: ProcedureContextInput,
+  visitedProcedureIds: Set<string> = new Set(),
 ): Promise<{
   contextText: string;
   methodStepsCount: number;
@@ -166,9 +170,22 @@ export async function extractProcedureContext(
         'name' in item &&
         typeof item.name === 'string'
       ) {
+        let amountStr: string | undefined =
+          typeof item.amount === 'string' ? item.amount : undefined;
+        if (
+          !amountStr &&
+          'amounts' in item &&
+          Array.isArray(item.amounts) &&
+          item.amounts.length > 0
+        ) {
+          amountStr =
+            typeof item.amounts[0] === 'string'
+              ? item.amounts[0]
+              : String(item.amounts[0]);
+        }
         allIngredients.push({
           name: item.name,
-          amount: typeof item.amount === 'string' ? item.amount : undefined,
+          amount: amountStr,
           unit: typeof item.unit === 'string' ? item.unit : undefined,
           allergen: Boolean(item.allergen),
         });
@@ -196,9 +213,21 @@ export async function extractProcedureContext(
           'name' in ing &&
           typeof ing.name === 'string'
         ) {
+          let amountStr: string | undefined =
+            typeof ing.amount === 'string' ? ing.amount : undefined;
+          if (
+            !amountStr &&
+            Array.isArray(ing.amounts) &&
+            ing.amounts.length > 0
+          ) {
+            amountStr =
+              typeof ing.amounts[0] === 'string'
+                ? ing.amounts[0]
+                : String(ing.amounts[0]);
+          }
           allIngredients.push({
             name: ing.name,
-            amount: typeof ing.amount === 'string' ? ing.amount : undefined,
+            amount: amountStr,
             unit: typeof ing.unit === 'string' ? ing.unit : undefined,
             allergen: Boolean(ing.allergen),
           });
@@ -206,9 +235,21 @@ export async function extractProcedureContext(
       }
       if (block.allergen && typeof block.allergen === 'object') {
         const a = block.allergen as Record<string, unknown>;
+        if (
+          Array.isArray(a.selectedAllergens) &&
+          a.selectedAllergens.length > 0
+        ) {
+          warningsList.push(`Allergens: ${a.selectedAllergens.join(', ')}`);
+        }
+        if (typeof a.summary === 'string' && a.summary.trim()) {
+          warningsList.push(`Allergen Summary: ${a.summary.trim()}`);
+        }
+        if (typeof a.detail === 'string' && a.detail.trim()) {
+          warningsList.push(`Allergen Details: ${a.detail.trim()}`);
+        }
         const names = Object.keys(a).filter((k) => a[k] === true);
         if (names.length > 0) {
-          warningsList.push(`Allergens: ${names.join(', ')}`);
+          warningsList.push(`Allergen Flags: ${names.join(', ')}`);
         }
       }
     } else if (kind === 'method' && Array.isArray(block.steps)) {
@@ -227,7 +268,46 @@ export async function extractProcedureContext(
         }
         if (stepText) {
           methodStepsCount++;
-          methodStepsList.push(`Step ${methodStepsCount}: ${stepText}`);
+          let fullStep = `Step ${methodStepsCount}: ${stepText}`;
+          if (step.timer && typeof step.timer === 'object') {
+            const t = step.timer as Record<string, unknown>;
+            if (t.seconds) {
+              const mins = Math.floor(Number(t.seconds) / 60);
+              const secs = Number(t.seconds) % 60;
+              const dur =
+                mins > 0
+                  ? `${mins} min${secs > 0 ? ` ${secs} sec` : ''}`
+                  : `${secs} sec`;
+              fullStep += ` (Timer: ${t.label || 'Duration'} - ${dur})`;
+            }
+          }
+          methodStepsList.push(fullStep);
+        }
+        if (step.criticalLimit && typeof step.criticalLimit === 'object') {
+          const cl = step.criticalLimit as Record<string, unknown>;
+          const parts = [
+            cl.label ? `[${cl.label}]` : '[CRITICAL CONTROL POINT]',
+            cl.value ? `Target: ${cl.value}` : '',
+            cl.howToCheck ? `Verification: ${cl.howToCheck}` : '',
+            cl.breachResponse ? `Corrective Action: ${cl.breachResponse}` : '',
+          ].filter(Boolean);
+          if (parts.length > 0) {
+            warningsList.push(parts.join(' - '));
+          }
+        }
+        if (step.discardAt && step.discardAtHours) {
+          warningsList.push(
+            `Maximum holding time: ${step.discardAtHours} hours before discarding.`,
+          );
+        }
+        if (step.note && typeof step.note === 'object') {
+          const n = step.note as Record<string, unknown>;
+          const sev =
+            typeof n.severity === 'string'
+              ? `[${n.severity.toUpperCase()}] `
+              : '';
+          const nText = extractBilingualStr(n.body);
+          if (nText) warningsList.push(`${sev}${nText}`);
         }
       }
     } else if (
@@ -346,10 +426,56 @@ export async function extractProcedureContext(
       kind === 'linked_procedures' &&
       Array.isArray(block.procedureIds)
     ) {
-      if (block.procedureIds.length > 0) {
-        textNotes.push(
-          `LINKED PROCEDURES (IDs): ${block.procedureIds.join(', ')}`,
-        );
+      const unvisited = block.procedureIds.filter(
+        (id: unknown): id is string =>
+          typeof id === 'string' &&
+          id.trim().length > 0 &&
+          !visitedProcedureIds.has(id.trim()),
+      );
+      if (unvisited.length > 0) {
+        for (const uid of unvisited) visitedProcedureIds.add(uid);
+        try {
+          const linkedRows = await db
+            .select()
+            .from(procedures)
+            .where(inArray(procedures.id, unvisited));
+          for (const lRow of linkedRows) {
+            let lBlocks: Array<Record<string, unknown>> = [];
+            const rawB = lRow.blocksEn;
+            if (Array.isArray(rawB)) {
+              lBlocks = rawB as Array<Record<string, unknown>>;
+            } else if (
+              rawB &&
+              typeof rawB === 'object' &&
+              'blocks' in rawB &&
+              Array.isArray((rawB as { blocks: unknown[] }).blocks)
+            ) {
+              lBlocks = (rawB as { blocks: Array<Record<string, unknown>> })
+                .blocks;
+            }
+            const lCtx = await extractProcedureContext(
+              {
+                titleEn: lRow.titleEn,
+                titleEs: lRow.titleEs,
+                purposeEn: lRow.purposeEn,
+                purposeEs: lRow.purposeEs,
+                blocks: lBlocks,
+              },
+              visitedProcedureIds,
+            );
+            if (lCtx.contextText) {
+              textNotes.push(
+                `\n[LINKED SUB-PROCEDURE: ${lRow.titleEn} (${lRow.titleEs})]:\n${lCtx.contextText}`,
+              );
+              methodStepsCount += lCtx.methodStepsCount;
+            }
+          }
+        } catch (err) {
+          logger.warn(
+            { err, unvisited },
+            'Failed to load sub-procedure blocks',
+          );
+        }
       }
     }
   }
@@ -436,6 +562,107 @@ export async function extractChapterContext(
   const checklistList: string[] = [];
   const textNotes: string[] = [];
   const attachmentTexts: string[] = [];
+  let attachedProcHasAttachments = false;
+
+  // 1. Collect all linked procedure IDs from chapter fields and blocks
+  const procedureIdsToFetch: string[] = [];
+  if (typeof chapter.procedureId === 'string' && chapter.procedureId.trim()) {
+    procedureIdsToFetch.push(chapter.procedureId.trim());
+  }
+  if (Array.isArray(chapter.procedureIds)) {
+    for (const pid of chapter.procedureIds) {
+      if (typeof pid === 'string' && pid.trim()) {
+        procedureIdsToFetch.push(pid.trim());
+      }
+    }
+  }
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') continue;
+    if (Array.isArray(block.procedureIds)) {
+      for (const pid of block.procedureIds) {
+        if (typeof pid === 'string' && pid.trim()) {
+          procedureIdsToFetch.push(pid.trim());
+        }
+      }
+    }
+    if (typeof block.procedureId === 'string' && block.procedureId.trim()) {
+      procedureIdsToFetch.push(block.procedureId.trim());
+    }
+  }
+
+  // 2. Fetch and resolve all attached procedures from DB
+  const uniqueProcedureIds = Array.from(new Set(procedureIdsToFetch));
+  logger.info(
+    {
+      chapterBlocksCount: blocks.length,
+      procedureIdsToFetch: uniqueProcedureIds,
+    },
+    'extractChapterContext: Resolving linked procedures for chapter quiz',
+  );
+
+  if (uniqueProcedureIds.length > 0) {
+    try {
+      const procRows = await db
+        .select()
+        .from(procedures)
+        .where(inArray(procedures.id, uniqueProcedureIds));
+
+      logger.info(
+        {
+          requested: uniqueProcedureIds,
+          found: procRows.length,
+          titles: procRows.map((p) => p.titleEn),
+        },
+        'extractChapterContext: Fetched procedure rows from database',
+      );
+
+      for (const procRow of procRows) {
+        let procBlocks: Array<Record<string, unknown>> = [];
+        const rawBlocks = procRow.blocksEn;
+        if (Array.isArray(rawBlocks)) {
+          procBlocks = rawBlocks as Array<Record<string, unknown>>;
+        } else if (
+          rawBlocks &&
+          typeof rawBlocks === 'object' &&
+          'blocks' in rawBlocks &&
+          Array.isArray((rawBlocks as { blocks: unknown[] }).blocks)
+        ) {
+          procBlocks = (
+            rawBlocks as {
+              blocks: Array<Record<string, unknown>>;
+            }
+          ).blocks;
+        }
+
+        const procCtx = await extractProcedureContext(
+          {
+            titleEn: procRow.titleEn,
+            titleEs: procRow.titleEs,
+            purposeEn: procRow.purposeEn,
+            purposeEs: procRow.purposeEs,
+            blocks: procBlocks,
+          },
+          new Set([procRow.id]),
+        );
+
+        if (procCtx.contextText) {
+          lines.push(
+            `\n=== ATTACHED PROCEDURE / RECIPE: ${procRow.titleEn} (${procRow.titleEs}) ===`,
+          );
+          lines.push(procCtx.contextText);
+          methodStepsCount += procCtx.methodStepsCount;
+          if (procCtx.hasAttachmentText) {
+            attachedProcHasAttachments = true;
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { err, uniqueProcedureIds },
+        'Failed to fetch attached procedures for chapter context',
+      );
+    }
+  }
 
   for (const block of blocks) {
     if (!block || typeof block !== 'object') continue;
@@ -562,6 +789,15 @@ export async function extractChapterContext(
           // Non-blocking: continue if PDF parsing fails
         }
       }
+    } else if (
+      kind === 'linked_procedures' &&
+      Array.isArray(block.procedureIds)
+    ) {
+      if (block.procedureIds.length > 0) {
+        textNotes.push(
+          `LINKED PROCEDURES (IDs): ${block.procedureIds.join(', ')}`,
+        );
+      }
     }
   }
 
@@ -593,6 +829,6 @@ export async function extractChapterContext(
   return {
     contextText: lines.join('\n').trim(),
     methodStepsCount,
-    hasAttachmentText: attachmentTexts.length > 0,
+    hasAttachmentText: attachmentTexts.length > 0 || attachedProcHasAttachments,
   };
 }

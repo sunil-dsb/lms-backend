@@ -277,6 +277,14 @@ export async function generateQuizFromChapter(
   );
   const userPrompt = `CHAPTER CONTEXT:\n"""\n${contextText}\n"""\n\nGenerate the bilingual quiz now according to the exact requested breakdown (${finalMcq} multiple_choice, ${finalSeq} sequence).`;
 
+  logger.info(
+    {
+      userPromptLength: userPrompt.length,
+      contextSnippet: contextText.slice(0, 400),
+    },
+    'generateQuizFromChapter: Calling AI model with chapter context',
+  );
+
   let rawJsonResponse: string;
   try {
     rawJsonResponse = await callOpenAiCompatible([
