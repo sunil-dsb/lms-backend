@@ -4,20 +4,80 @@ import { requireAuth } from '../../config/middleware.ts';
 import { requireRoles } from '../../shared/middleware/requireRoles.middleware.ts';
 
 const employeesRoute: Router = express.Router();
-employeesRoute.use(requireAuth, requireRoles(['super_admin']));
+employeesRoute.use(requireAuth);
 
-// All employee admin routes require auth + admin clearance.
-// Applied via adminRoutes in routes/v1/index.ts.
+// ---- Specific lookup routes (must precede /:id) ---------------------------
+employeesRoute.get(
+  '/supervisors',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.getSupervisors,
+);
 
-// ---- Employees -------------------------------------------------------------
-employeesRoute.get('/', employeesController.listEmployees);
-employeesRoute.get('/:id', employeesController.getEmployee);
-employeesRoute.get('/:id/training', employeesController.getEmployeeTraining);
-employeesRoute.post('/', employeesController.createEmployee);
-employeesRoute.patch('/:id', employeesController.updateEmployee);
-employeesRoute.post('/:id/invites', employeesController.resendInvite);
-employeesRoute.post('/:id/deactivate', employeesController.deactivate);
-// Reactivation removed — a deactivated employee stays deactivated.
-// employeesRoute.post('/:id/reactivate', employeesController.reactivate);
+employeesRoute.get(
+  '/managers',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.getManagers,
+);
+
+employeesRoute.get(
+  '/subordinates',
+  requireRoles(['super_admin', 'manager', 'supervisor']),
+  employeesController.getSubordinates,
+);
+
+employeesRoute.get(
+  '/roles',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.getOperationalRoles,
+);
+
+// ---- Employees CRUD --------------------------------------------------------
+employeesRoute.get(
+  '/',
+  requireRoles(['super_admin', 'manager', 'supervisor']),
+  employeesController.listEmployees,
+);
+
+employeesRoute.get(
+  '/:id',
+  requireRoles(['super_admin', 'manager', 'supervisor', 'employee']),
+  employeesController.getEmployee,
+);
+
+employeesRoute.get(
+  '/:id/training',
+  requireRoles(['super_admin', 'manager', 'supervisor']),
+  employeesController.getEmployeeTraining,
+);
+
+employeesRoute.post(
+  '/',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.createEmployee,
+);
+
+employeesRoute.patch(
+  '/:id',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.updateEmployee,
+);
+
+employeesRoute.put(
+  '/:id/subordinates',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.updateSubordinates,
+);
+
+employeesRoute.post(
+  '/:id/invites',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.resendInvite,
+);
+
+employeesRoute.post(
+  '/:id/deactivate',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.deactivate,
+);
 
 export default employeesRoute;

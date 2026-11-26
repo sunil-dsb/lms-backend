@@ -1,5 +1,5 @@
 import ApiError from '../../shared/utils/ApiError.ts';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import {
   employees,
@@ -222,12 +222,33 @@ export interface TrainingProgressOptions {
   limit?: number;
   search?: string;
   includeAssignments?: boolean;
+  employeeIds?: string[];
 }
 
 export async function getTrainingProgress(
   options: TrainingProgressOptions = {},
 ) {
   const todayStart = new Date().setHours(0, 0, 0, 0);
+
+  const conditions = [eq(trainingCourses.status, 'published')];
+  if (options.employeeIds !== undefined) {
+    if (options.employeeIds.length === 0) {
+      return {
+        summary: { completed: 0, inProgress: 0, overdue: 0 },
+        employees: [],
+        courses: [],
+        pagination: {
+          page: options.page ?? 1,
+          limit: options.limit ?? 10,
+          total: 0,
+          totalPages: 1,
+        },
+      };
+    }
+    conditions.push(
+      inArray(trainingCourseAssignments.employeeId, options.employeeIds),
+    );
+  }
 
   const rows = await db
     .select({
@@ -259,7 +280,7 @@ export async function getTrainingProgress(
       eq(trainingCourseAssignments.currentChapterId, trainingChapters.id),
     )
     // Match the employee drill-down, which shows published courses only.
-    .where(eq(trainingCourses.status, 'published'));
+    .where(and(...conditions));
 
   const allStations = await db
     .select({ id: stations.id, name: stations.name })
@@ -615,6 +636,7 @@ export async function exportTrainingProgressCsv(
   if (options.status) exportOpts.status = options.status;
   if (options.groupBy) exportOpts.groupBy = options.groupBy;
   if (options.search) exportOpts.search = options.search;
+  if (options.employeeIds) exportOpts.employeeIds = options.employeeIds;
 
   // Retrieve unpaginated progress dataset with assignments included
   const progress = await getTrainingProgress(exportOpts);

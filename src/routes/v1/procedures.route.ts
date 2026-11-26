@@ -25,7 +25,7 @@ const proceduresRoute: Router = express.Router();
 proceduresRoute.get(
   '/filter',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager', 'supervisor']),
   filterProcedures,
 );
 
@@ -35,11 +35,11 @@ proceduresRoute.get('/assigned', requireAuth, getAssignedProcedures);
 // Public read route (any logged-in employee)
 proceduresRoute.get('/:slug', requireAuth, getProcedure);
 
-// Admin rout
+// Admin / Manager procedure authoring routes
 proceduresRoute.post(
   '/',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   createLimiter({
     limit: 20,
     message: 'Too many procedures created, please try again later.',
@@ -50,7 +50,7 @@ proceduresRoute.post(
 proceduresRoute.post(
   '/import',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   createLimiter({
     limit: 20,
     message: 'Too many procedure import requests, please try again later.',
@@ -62,14 +62,14 @@ proceduresRoute.post(
 proceduresRoute.patch(
   '/:id',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   updateProcedure,
 );
 
 proceduresRoute.delete(
   '/:id',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   createLimiter({
     limit: 20,
     message: 'Too many procedure deletions, please try again later.',
@@ -80,43 +80,43 @@ proceduresRoute.delete(
 proceduresRoute.get(
   '/',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager', 'supervisor']),
   getAllProcedures,
 );
 
 proceduresRoute.patch(
   '/:id/station',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   updateProcedureStations,
 );
 
 proceduresRoute.patch(
   '/:id/promo',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   updateProcedurePromo,
 );
 
-// Archive / unarchive / publish (super_admin only)
+// Archive / unarchive / publish (super_admin & manager)
 proceduresRoute.post(
   '/:id/publish',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   publishProcedure,
 );
 
 proceduresRoute.post(
   '/:id/archive',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   archiveProcedure,
 );
 
 proceduresRoute.post(
   '/:id/unarchive',
   requireAuth,
-  requireRoles(['super_admin']),
+  requireRoles(['super_admin', 'manager']),
   unarchiveProcedure,
 );
 

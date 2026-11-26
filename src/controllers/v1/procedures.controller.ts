@@ -93,7 +93,13 @@ export const getAllProcedures = catchAsync(
             : undefined;
 
     const paginatedResult = await proceduresService.listProcedures(
-      { search, isPromo },
+      {
+        search,
+        isPromo,
+        ...(req.employee?.role === 'supervisor'
+          ? { status: 'published' as const }
+          : {}),
+      },
       page,
       limit,
     );
@@ -310,7 +316,10 @@ export const getProcedure = catchAsync(
       employeeId: req.employee?.id ?? '',
       isSuperAdmin: req.isSuperAdmin,
     });
-    if (!procedure) {
+    if (
+      !procedure ||
+      (req.employee?.role === 'supervisor' && procedure.status !== 'published')
+    ) {
       throw new ApiError('Procedure not found', 404, true, '', {
         code: 'NOT_FOUND',
       });
