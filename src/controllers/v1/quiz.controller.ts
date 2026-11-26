@@ -275,6 +275,7 @@ export const generateQuizFromChapter = catchAsync(
         titleEs: chRow.titleEs,
         purposeEn: chRow.subtitleEn || '',
         purposeEs: chRow.subtitleEs || '',
+        procedureId: chRow.procedureId || undefined,
         blocks: Array.isArray(chRow.blocks)
           ? (chRow.blocks as Array<Record<string, unknown>>)
           : [],

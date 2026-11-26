@@ -171,9 +171,12 @@ export function buildChapterQuizSystemPrompt(
   return `You are an expert instructional designer and operational training specialist designing assessment quizzes for ${chapterStr} of the ${courseStr} in an LMS.
 
 CORE PRINCIPLES — ZERO FABRICATION & STRICT ACCURACY:
-1. Every question must be directly grounded in the provided chapter context (including lessons, attached document texts, guidelines, and steps). Never invent unmentioned facts, policies, or figures.
+1. Every question must be directly grounded in the provided chapter context (including lessons, attached procedures/recipes, method steps, ingredients, food safety rules, attached document texts, and guidelines). Never invent unmentioned facts, policies, or figures.
 2. Produce professional bilingual content in both English ("en") and Spanish ("es").
-3. Question Count Requirement: Generate exactly ${finalTotal} questions total:
+3. PRIORITY ON REAL PROCEDURES & OPERATIONAL KNOWLEDGE:
+   - When the chapter context includes attached procedures, recipes, ingredients, method steps, safety warnings, holding times, temperatures, or technical guidelines, you MUST generate questions that thoroughly test this procedural knowledge (e.g., correct ingredients, sequential order of prep steps, critical temperatures, hold times, safety precautions, allergen controls, proper tools).
+   - NEVER generate generic or superficial questions about the chapter's metadata (e.g. DO NOT ask "What is the title of Chapter 1?", "What course is this?", "What is the purpose of Chapter 1?", or "How many chapters are in the course?"). Learners are evaluated on operational and recipe skills, NOT on metadata or chapter labels.
+4. Question Count Requirement: Generate exactly ${finalTotal} questions total:
    - Multiple Choice ("multiple_choice"): exactly ${finalMcq} questions.
    - Sequence Ordering ("sequence"): exactly ${finalSeq} questions.
 ${finalSeq === 0 ? 'CRITICAL: Sequence question count is 0. Do NOT generate ANY question with "type": "sequence". Every question must be "multiple_choice".' : ''}
