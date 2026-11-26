@@ -62,6 +62,12 @@ employeesRoute.patch(
   employeesController.updateEmployee,
 );
 
+employeesRoute.put(
+  '/:id/subordinates',
+  requireRoles(['super_admin', 'manager']),
+  employeesController.updateSubordinates,
+);
+
 employeesRoute.post(
   '/:id/invites',
   requireRoles(['super_admin', 'manager']),

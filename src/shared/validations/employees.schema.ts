@@ -101,10 +101,12 @@ export const baseEmployeeSchema = z.object({
   role: roleEnum.default('employee'),
   jobIds: z
     .array(z.string().uuid('Job ID must be a valid UUID'))
-    .min(1, 'At least one job role is required'),
+    .optional()
+    .default([]),
   stationIds: z
     .array(z.string().uuid('Station ID must be a valid UUID'))
-    .min(1, 'At least one kitchen station is required'),
+    .optional()
+    .default([]),
   employeeCode: z
     .string()
     .trim()
@@ -208,18 +210,35 @@ export const baseEmployeeSchema = z.object({
     .array(z.string().uuid('Invalid manager ID format'))
     .optional()
     .default([]),
+  subordinateIds: z
+    .array(z.string().uuid('Invalid subordinate ID format'))
+    .optional()
+    .default([]),
 });
 
 export const createSchema = baseEmployeeSchema.superRefine((data, ctx) => {
-  if (
-    data.role === 'employee' &&
-    (!data.supervisorIds || data.supervisorIds.length === 0)
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['supervisorIds'],
-      message: 'At least one reporting supervisor is required for employees',
-    });
+  if (data.role === 'employee') {
+    if (!data.jobIds || data.jobIds.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['jobIds'],
+        message: 'At least one job role is required for employees',
+      });
+    }
+    if (!data.stationIds || data.stationIds.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['stationIds'],
+        message: 'At least one kitchen station is required for employees',
+      });
+    }
+    if (!data.supervisorIds || data.supervisorIds.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['supervisorIds'],
+        message: 'At least one reporting supervisor is required for employees',
+      });
+    }
   }
   if (
     data.role === 'supervisor' &&

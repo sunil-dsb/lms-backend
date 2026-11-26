@@ -116,6 +116,7 @@ export interface CreateEmployeeInput {
   hourlyRate?: string | number | null | undefined;
   supervisorIds?: string[] | undefined;
   managerIds?: string[] | undefined;
+  subordinateIds?: string[] | undefined;
 }
 
 export async function createEmployeeTransaction(
@@ -273,6 +274,27 @@ export async function createEmployeeTransaction(
       );
     }
 
+    // Optional direct subordinates assignment at creation time
+    if (input.subordinateIds && input.subordinateIds.length > 0) {
+      if (input.role === 'supervisor') {
+        // Subordinates are kitchen employees
+        await tx.insert(employeeSupervisors).values(
+          input.subordinateIds.map((empId) => ({
+            employeeId: empId,
+            supervisorId: employeeId,
+          })),
+        );
+      } else if (input.role === 'manager') {
+        // Subordinates are supervisors
+        await tx.insert(supervisorManagers).values(
+          input.subordinateIds.map((supId) => ({
+            supervisorId: supId,
+            managerId: employeeId,
+          })),
+        );
+      }
+    }
+
     // Auto-assign any courses that match the employee's location, jobs, or stations
     try {
       await syncEmployeeCourses(employeeId, tx);
@@ -323,6 +345,7 @@ export interface UpdateEmployeeInput {
   hourlyRate?: string | number | null | undefined;
   supervisorIds?: string[] | undefined;
   managerIds?: string[] | undefined;
+  subordinateIds?: string[] | undefined;
 }
 
 export async function updateEmployeeTransaction(
@@ -695,6 +718,78 @@ export async function getManagerSubordinates(managerId: string) {
   }
 
   return Array.from(map.values()).filter((item) => item.id !== managerId);
+}
+
+export async function setSupervisorSubordinates(
+  supervisorId: string,
+  employeeIds: string[],
+) {
+  return db.transaction(async (tx) => {
+    // 1. Remove existing employee-supervisor links for this supervisor
+    await tx
+      .delete(employeeSupervisors)
+      .where(eq(employeeSupervisors.supervisorId, supervisorId));
+
+    // 2. If new employees provided, insert them
+    if (employeeIds.length > 0) {
+      const uniqueEmployeeIds = Array.from(new Set(employeeIds)).filter(
+        (id) => id !== supervisorId,
+      );
+      if (uniqueEmployeeIds.length > 0) {
+        await tx.insert(employeeSupervisors).values(
+          uniqueEmployeeIds.map((employeeId) => ({
+            supervisorId,
+            employeeId,
+          })),
+        );
+      }
+    }
+
+    return getSupervisorSubordinates(supervisorId);
+  });
+}
+
+export async function setManagerSupervisors(
+  managerId: string,
+  supervisorIds: string[],
+) {
+  return db.transaction(async (tx) => {
+    // 1. Remove existing supervisor-manager links for this manager
+    await tx
+      .delete(supervisorManagers)
+      .where(eq(supervisorManagers.managerId, managerId));
+
+    // 2. If new supervisors provided, insert them
+    if (supervisorIds.length > 0) {
+      const uniqueSupervisorIds = Array.from(new Set(supervisorIds)).filter(
+        (id) => id !== managerId,
+      );
+      if (uniqueSupervisorIds.length > 0) {
+        await tx.insert(supervisorManagers).values(
+          uniqueSupervisorIds.map((supervisorId) => ({
+            managerId,
+            supervisorId,
+          })),
+        );
+      }
+    }
+
+    // Return the updated list of supervisors reporting to this manager
+    const rows = await tx
+      .select({
+        id: employees.id,
+        name: employees.name,
+        email: employees.email,
+        employeeCode: employees.employeeCode,
+        locationId: employees.locationId,
+        role: employees.role,
+        status: employees.status,
+      })
+      .from(supervisorManagers)
+      .innerJoin(employees, eq(employees.id, supervisorManagers.supervisorId))
+      .where(eq(supervisorManagers.managerId, managerId));
+    return rows;
+  });
 }
 
 export async function listSupervisors(locationId?: string) {

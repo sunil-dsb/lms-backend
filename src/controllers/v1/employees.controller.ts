@@ -24,30 +24,45 @@ import {
   formatPaginatedResult,
 } from '../../shared/utils/pagination.ts';
 import { db } from '../../db/client.ts';
-import {
-  employees,
-  locations,
-  session,
-  jobs,
-  stations,
-} from '../../db/index.ts';
+import { employees, locations } from '../../db/index.ts';
 
 import {
   sendInviteMagicLink,
   getActiveInviteUrl,
   createEmployeeTransaction,
   updateEmployeeTransaction,
-  getEmployeeSupervisors,
-  getSupervisorManagers,
   getSupervisorSubordinates,
   getManagerSubordinates,
-  listSupervisors,
-  listManagers,
 } from '../../services/employee/employee.service.ts';
 
-import { listEmployeeTraining } from '../../services/courses/course-assignments.service.ts';
-
 import catchAsync from '../../shared/utils/catchAsync.ts';
+import {
+  publicEmployee,
+  getJobsAndStationsMap,
+  buildEmployeeResponse,
+} from './employee-helpers.ts';
+
+// Re-export helpers for consumers (e.g. auth.controller.ts)
+export { publicEmployee, getJobsAndStationsMap, buildEmployeeResponse };
+
+// Re-export training controller
+export { getEmployeeTraining } from './employee-training.controller.ts';
+
+// Re-export lifecycle actions (invites, deactivate, reactivate)
+export {
+  resendInvite,
+  deactivate,
+  reactivate,
+} from './employee-lifecycle.controller.ts';
+
+// Re-export team/hierarchy & role controllers so existing router routes remain seamlessly intact
+export {
+  getSupervisors,
+  getManagers,
+  getSubordinates,
+  updateSubordinates,
+  getOperationalRoles,
+} from './employee-team.controller.ts';
 
 // ============================================================================
 // Employees CRUD (existing)
@@ -133,166 +148,6 @@ export const createEmployee = catchAsync(
     );
   },
 );
-
-// ---------- POST /api/admin/employees/:id/invites --------------------------
-export const resendInvite = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.userId) {
-      throw new ApiError('Not authenticated', 401, true, '', {
-        code: 'UNAUTHENTICATED',
-      });
-    }
-
-    const param = idParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid employee id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const [employee] = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, param.data.id))
-      .limit(1);
-    if (!employee) {
-      throw new ApiError('Employee not found', 404, true, '', {
-        code: 'EMPLOYEE_NOT_FOUND',
-      });
-    }
-    if (employee.status !== 'pending') {
-      res.status(409).json({
-        error: {
-          code: 'EMPLOYEE_NOT_PENDING',
-          message: 'Only pending employees can be re-invited.',
-        },
-      });
-      return;
-    }
-
-    // Better Auth automatically invalidates the old token when a new
-    // magic link is requested for the same email (verification table
-    // entries expire; new one replaces semantics via TTL).
-    const inviteUrl = await sendInviteMagicLink({
-      email: employee.email,
-      name: employee.name,
-      languagePref: employee.languagePref,
-    });
-
-    res
-      .status(200)
-      .json(ApiResponse.success('Invite resent successfully', { inviteUrl }));
-  },
-);
-
-// ---------- POST /api/admin/employees/:id/deactivate -----------------------
-export const deactivate = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const param = idParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid employee id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const [employee] = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, param.data.id))
-      .limit(1);
-    if (!employee) {
-      throw new ApiError('Employee not found', 404, true, '', {
-        code: 'EMPLOYEE_NOT_FOUND',
-      });
-    }
-    if (employee.status === 'deactivated') {
-      res.status(409).json({
-        error: {
-          code: 'ALREADY_DEACTIVATED',
-          message: 'Employee is already deactivated.',
-        },
-      });
-      return;
-    }
-
-    await db.transaction(async (tx) => {
-      await tx
-        .update(employees)
-        .set({ status: 'deactivated', deactivatedAt: new Date() })
-        .where(eq(employees.id, employee.id));
-      // Kill every active Better Auth session for this employee. If the
-      // employee never activated, employees.userId is null and this is a no-op.
-      if (employee.userId) {
-        await tx.delete(session).where(eq(session.userId, employee.userId));
-      }
-    });
-
-    const [updated] = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, employee.id))
-      .limit(1);
-    const employeeResponse = await buildEmployeeResponse(updated!);
-    res.status(200).json(
-      ApiResponse.success('Employee deactivated successfully', {
-        employee: employeeResponse,
-      }),
-    );
-  },
-);
-
-// ---------- POST /api/admin/employees/:id/reactivate ----------------------
-// Reactivation removed — an employee can only be pending, active or
-// deactivated; once deactivated there is no path back to active.
-/*
-export const reactivate = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const param = idParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid employee id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const [employee] = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, param.data.id))
-      .limit(1);
-    if (!employee) {
-      throw new ApiError('Employee not found', 404, true, '', {
-        code: 'EMPLOYEE_NOT_FOUND',
-      });
-    }
-    if (employee.status !== 'deactivated') {
-      res.status(409).json({
-        error: {
-          code: 'NOT_DEACTIVATED',
-          message: 'Employee is not deactivated.',
-        },
-      });
-      return;
-    }
-
-    await db
-      .update(employees)
-      .set({ status: 'active', deactivatedAt: null })
-      .where(eq(employees.id, employee.id));
-
-    const [updated] = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, employee.id))
-      .limit(1);
-    const employeeResponse = await buildEmployeeResponse(updated!);
-    res.status(200).json(
-      ApiResponse.success('Employee reactivated successfully', {
-        employee: employeeResponse,
-      }),
-    );
-  },
-);
-*/
 
 // ---------- GET /api/admin/employees?status=... ----------------------------
 export const listEmployees = catchAsync(
@@ -575,88 +430,6 @@ export const getEmployee = catchAsync(
   },
 );
 
-// ---------- GET /api/admin/employees/:id/training ---------------------------
-// Every training course assigned to this employee, with its current state.
-// Reuses the same assignment query the employee-side "my training" list is
-// built on, but addressed by employee id in the URL so admins can fetch it
-// for anyone (employees route is already super_admin-gated).
-export const getEmployeeTraining = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const param = idParam.safeParse(req.params);
-    if (!param.success) {
-      throw new ApiError('Invalid employee id', 400, true, '', {
-        code: 'INVALID_INPUT',
-      });
-    }
-
-    const [employee] = await db
-      .select({ id: employees.id, name: employees.name })
-      .from(employees)
-      .where(eq(employees.id, param.data.id))
-      .limit(1);
-    if (!employee) {
-      throw new ApiError('Employee not found', 404, true, '', {
-        code: 'EMPLOYEE_NOT_FOUND',
-      });
-    }
-
-    const rows = await listEmployeeTraining(param.data.id);
-
-    const todayStart = new Date().setHours(0, 0, 0, 0);
-    const assignments = rows.map((r) => {
-      const completed = r.courseCompletedAt !== null;
-      const isOverdue =
-        !completed && new Date(r.dueDate).getTime() < todayStart;
-      // Four-state status the admin UI expects: a course still `due` when
-      // nothing is done yet, `in_progress` once chapters are completed,
-      // `complete` when finished, `overdue` when past due unfinished.
-      const status = completed
-        ? 'complete'
-        : isOverdue
-          ? 'overdue'
-          : r.completedChapterCount > 0
-            ? 'in_progress'
-            : 'due';
-
-      return {
-        assignmentId: r.assignmentId,
-        courseId: r.courseId,
-        titleEn: r.titleEn,
-        titleEs: r.titleEs,
-        purposeEn: r.purposeEn,
-        purposeEs: r.purposeEs,
-        courseStatus: r.courseStatus,
-        isRequired: r.isRequired,
-        dueDate: r.dueDate,
-        assignedAt: r.assignedAt.toISOString(),
-        currentChapterId: r.currentChapterId,
-        currentChapterNumber: r.currentChapterNumber,
-        currentChapterTitleEn: r.currentChapterTitleEn,
-        currentChapterTitleEs: r.currentChapterTitleEs,
-        courseCompletedAt: r.courseCompletedAt
-          ? r.courseCompletedAt.toISOString()
-          : null,
-        chapterCount: r.chapterCount,
-        completedChapterCount: r.completedChapterCount,
-        progressPercent: r.progressPercent,
-        status: r.status || status,
-        overrideUntil: r.overrideUntil ?? null,
-        overriddenBy: r.overriddenBy ?? null,
-        overriddenAt: r.overriddenAt ?? null,
-        overrideReason: r.overrideReason ?? null,
-        isOverridden: r.isOverridden ?? false,
-      };
-    });
-
-    res.status(200).json(
-      ApiResponse.success('Employee training retrieved successfully', {
-        employee: { id: employee.id, name: employee.name },
-        assignments,
-      }),
-    );
-  },
-);
-
 // ---------- PATCH /api/admin/employees/:id ---------------------------------
 export const updateEmployee = catchAsync(
   async (req: Request, res: Response): Promise<void> => {
@@ -794,228 +567,3 @@ export const updateEmployee = catchAsync(
     );
   },
 );
-
-// ---------- GET /api/admin/employees/supervisors ---------------------------
-export const getSupervisors = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const locationId =
-      (req.query.locationId as string) || req.employee?.locationId;
-    const supervisors = await listSupervisors(locationId);
-    res.status(200).json(
-      ApiResponse.success('Supervisors retrieved successfully', {
-        supervisors,
-      }),
-    );
-  },
-);
-
-// ---------- GET /api/admin/employees/managers ------------------------------
-export const getManagers = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const locationId =
-      (req.query.locationId as string) || req.employee?.locationId;
-    const managers = await listManagers(locationId);
-    res.status(200).json(
-      ApiResponse.success('Managers retrieved successfully', {
-        managers,
-      }),
-    );
-  },
-);
-
-// ---------- GET /api/admin/employees/subordinates --------------------------
-export const getSubordinates = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    if (!req.employee?.id) {
-      throw new ApiError('Employee profile required', 400, true, '', {
-        code: 'EMPLOYEE_PROFILE_REQUIRED',
-      });
-    }
-    const subordinates =
-      req.employee.role === 'manager'
-        ? await getManagerSubordinates(req.employee.id)
-        : await getSupervisorSubordinates(req.employee.id);
-
-    res.status(200).json(
-      ApiResponse.success('Subordinates retrieved successfully', {
-        subordinates,
-      }),
-    );
-  },
-);
-
-// ---------- GET /api/v1/employees/roles ------------------------------------
-export const getOperationalRoles = catchAsync(
-  async (req: Request, res: Response): Promise<void> => {
-    const availableRoles = req.isSuperAdmin
-      ? [
-          {
-            id: 'manager',
-            name: 'Manager',
-            description: 'Department or location manager',
-          },
-          {
-            id: 'supervisor',
-            name: 'Supervisor',
-            description: 'Team and shift supervisor',
-          },
-          {
-            id: 'employee',
-            name: 'Employee',
-            description: 'Operational staff and training learner',
-          },
-        ]
-      : [
-          {
-            id: 'supervisor',
-            name: 'Supervisor',
-            description: 'Team and shift supervisor',
-          },
-          {
-            id: 'employee',
-            name: 'Employee',
-            description: 'Operational staff and training learner',
-          },
-        ];
-
-    res.status(200).json(
-      ApiResponse.success('Roles retrieved successfully', {
-        roles: availableRoles,
-      }),
-    );
-  },
-);
-
-// ============================================================================
-// Shared helpers
-// ============================================================================
-
-export function publicEmployee(
-  e: Readonly<typeof employees.$inferSelect>,
-  maskSin = true,
-) {
-  let formattedSin = e.sinNumber ?? null;
-  if (maskSin && formattedSin) {
-    formattedSin = formattedSin.replace(
-      /^(\d{3})-?(\d{3})-?(\d{3})$/,
-      '***-***-$3',
-    );
-  }
-
-  return {
-    id: e.id,
-    name: e.name,
-    email: e.email,
-    employeeCode: e.employeeCode,
-    locationId: e.locationId,
-    role: e.role,
-    languagePref: e.languagePref,
-    status: e.status,
-    dateOfBirth: e.dateOfBirth ?? null,
-    fathersName: e.fathersName ?? null,
-    gender: e.gender ?? null,
-    address: e.address ?? null,
-    phoneNumber: e.phoneNumber ?? null,
-    emergencyContactName: e.emergencyContactName ?? null,
-    emergencyContactRelation: e.emergencyContactRelation ?? null,
-    emergencyContactPhone: e.emergencyContactPhone ?? null,
-    startDate: e.startDate ?? null,
-    sinNumber: formattedSin,
-    hourlyRate: e.hourlyRate != null ? String(e.hourlyRate) : null,
-    jobIds: e.jobIds ?? [],
-    roleIds: e.jobIds ?? [],
-    stationIds: e.stationIds ?? [],
-    createdAt: e.createdAt.toISOString(),
-    deactivatedAt: e.deactivatedAt ? e.deactivatedAt.toISOString() : null,
-  };
-}
-
-export async function getJobsAndStationsMap(
-  jobIds: (string | null | undefined)[],
-  stationIds: (string | null | undefined)[],
-) {
-  const uniqueJobIds = [
-    ...new Set(jobIds.filter((id): id is string => Boolean(id))),
-  ];
-  const uniqueStationIds = [
-    ...new Set(stationIds.filter((id): id is string => Boolean(id))),
-  ];
-
-  const [jobRows, stationRows] = await Promise.all([
-    uniqueJobIds.length > 0
-      ? db
-          .select({ id: jobs.id, name: jobs.name })
-          .from(jobs)
-          .where(inArray(jobs.id, uniqueJobIds))
-      : Promise.resolve([]),
-    uniqueStationIds.length > 0
-      ? db
-          .select({ id: stations.id, name: stations.name })
-          .from(stations)
-          .where(inArray(stations.id, uniqueStationIds))
-      : Promise.resolve([]),
-  ]);
-
-  const jobMap = new Map<string, { id: string; name: string }>();
-  for (const j of jobRows) {
-    jobMap.set(j.id, { id: j.id, name: j.name });
-  }
-
-  const stationMap = new Map<string, { id: string; name: string }>();
-  for (const s of stationRows) {
-    stationMap.set(s.id, { id: s.id, name: s.name });
-  }
-
-  return { jobMap, stationMap };
-}
-
-export async function buildEmployeeResponse(
-  employee: typeof employees.$inferSelect,
-  locationName?: string | null,
-  viewerRole?: string,
-) {
-  let locName = locationName;
-  if (locName === undefined && employee.locationId) {
-    const [loc] = await db
-      .select({ name: locations.name })
-      .from(locations)
-      .where(eq(locations.id, employee.locationId))
-      .limit(1);
-    locName = loc?.name ?? null;
-  }
-
-  const [{ jobMap, stationMap }, supervisorsList, managersList] =
-    await Promise.all([
-      getJobsAndStationsMap(employee.jobIds || [], employee.stationIds || []),
-      getEmployeeSupervisors(employee.id),
-      getSupervisorManagers(employee.id),
-    ]);
-
-  const resolvedJobs = (employee.jobIds || [])
-    .map((id) => jobMap.get(id))
-    .filter((j): j is { id: string; name: string } => Boolean(j));
-
-  const resolvedStations = (employee.stationIds || [])
-    .map((id) => stationMap.get(id))
-    .filter((s): s is { id: string; name: string } => Boolean(s));
-
-  const maskSin =
-    viewerRole !== 'super_admin' &&
-    viewerRole !== 'manager' &&
-    viewerRole !== 'self';
-
-  return {
-    ...publicEmployee(employee, maskSin),
-    locationName: locName ?? null,
-    roleName: employee.role,
-    jobs: resolvedJobs,
-    jobIds: employee.jobIds || [],
-    roleIds: employee.jobIds || [],
-    stations: resolvedStations,
-    stationIds: employee.stationIds || [],
-    supervisors: supervisorsList,
-    supervisorIds: supervisorsList.map((s) => s.id),
-    managers: managersList,
-    managerIds: managersList.map((m) => m.id),
-  };
-}
